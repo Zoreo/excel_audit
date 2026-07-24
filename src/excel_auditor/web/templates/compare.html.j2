@@ -1,0 +1,12 @@
+{% extends "_layout.html.j2" %}
+{% block title %}Compare workbook versions{% endblock %}
+{% block content %}
+<h1>Compare two workbook versions</h1>
+<form action="/compare" method="post" enctype="multipart/form-data">
+  <label for="old_file">Old version</label>
+  <input type="file" id="old_file" name="old_file" accept=".xlsx,.xlsm" required>
+  <label for="new_file">New version</label>
+  <input type="file" id="new_file" name="new_file" accept=".xlsx,.xlsm" required>
+  <button type="submit">Compare</button>
+</form>
+{% endblock %}

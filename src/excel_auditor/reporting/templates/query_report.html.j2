@@ -1,0 +1,115 @@
+{% extends "base.html.j2" %}
+{% import "_macros.html.j2" as macros %}
+
+{% block title %}Query Result — {{ report.workbook }}{% endblock %}
+
+{% block content %}
+<header class="report-header">
+  <h1>Verified Spreadsheet Query</h1>
+  <div class="meta">
+    {{ report.workbook }}{% if report.question %} · “{{ report.question }}”{% endif %}
+  </div>
+</header>
+
+<h2>Result</h2>
+<div class="cards">
+  <div class="card">
+    <div class="level {{ 'low' if report.result.status.value == 'verified' else 'elevated' }}">
+      {{ report.result.status.value | replace('_', ' ') }}
+    </div>
+    <div class="label">Status</div>
+  </div>
+  {% if report.result.formatted_value %}
+  <div class="card">
+    <div class="num">{{ report.result.formatted_value }}</div>
+    <div class="label">Value</div>
+  </div>
+  {% endif %}
+</div>
+{% if report.result.message %}<p>{{ report.result.message }}</p>{% endif %}
+
+{% if report.result.candidates %}
+<h2>Confirmation required</h2>
+<ol>
+  {% for candidate in report.result.candidates %}
+  <li>{{ candidate.sheet_name }} → <strong>{{ candidate.column_name }}</strong>
+      <span class="muted">({{ candidate.column_type }}{% if candidate.reason %}; {{ candidate.reason }}{% endif %})</span></li>
+  {% endfor %}
+</ol>
+{% endif %}
+
+{% if report.result.groups %}
+<h2>Grouped results</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Group</th><th>Value</th><th>Rows</th></tr></thead>
+  <tbody>
+  {% for row in report.result.groups %}
+    <tr>
+      <td>{% for key, value in row.key.items() %}{{ key }}: <strong>{{ value }}</strong>{% if not loop.last %} · {% endif %}{% endfor %}</td>
+      <td>{{ row.value }}</td>
+      <td class="muted">{{ row.rows }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+{% if report.result.comparison %}
+<h2>Period comparison</h2>
+<div class="table-wrap">
+<table>
+  <tbody>
+  {% for key, value in report.result.comparison.items() %}
+    <tr><th>{{ key | replace('_', ' ') }}</th><td>{{ value }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+{% if report.result.rows %}
+<h2>Matching rows</h2>
+<div class="table-wrap">
+<table>
+  {% set first = report.result.rows[0] %}
+  <thead><tr>{% for key in first.keys() %}<th>{{ key }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for row in report.result.rows %}
+    <tr>{% for value in row.values() %}<td>{{ value if value is not none else '—' }}</td>{% endfor %}</tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+<h2>Calculated using</h2>
+{% set p = report.result.provenance %}
+<div class="table-wrap">
+<table>
+  <tbody>
+    <tr><th>Workbook</th><td>{{ p.workbook or '—' }}</td></tr>
+    <tr><th>Sheet</th><td>{{ p.sheet or '—' }}</td></tr>
+    <tr><th>Table</th><td class="mono">{{ p.table_ref or '—' }}</td></tr>
+    <tr><th>Value column</th><td>{{ p.value_column or '—' }}</td></tr>
+    <tr><th>Date column</th><td>{{ p.date_column or '—' }}</td></tr>
+    <tr><th>Operation</th><td>{{ p.operation or '—' }}{% if p.function %} ({{ p.function }}){% endif %}</td></tr>
+    <tr><th>Filters</th><td>{{ p.filters | join('; ') if p.filters else '—' }}</td></tr>
+    <tr><th>Group by</th><td>{{ p.group_by | join(', ') if p.group_by else '—' }}</td></tr>
+    <tr><th>Rows included</th><td>{{ p.rows_included }}</td></tr>
+    <tr><th>Blank values excluded</th><td>{{ p.rows_excluded_blank }}</td></tr>
+    <tr><th>Total rows excluded</th><td>{{ p.rows_excluded_total_rows }}</td></tr>
+    <tr><th>Currency</th><td>{{ p.currency or '—' }}</td></tr>
+  </tbody>
+</table>
+</div>
+{% if p.assumptions %}
+<h3>Assumptions</h3>
+<ul>{% for a in p.assumptions %}<li>{{ a }}</li>{% endfor %}</ul>
+{% endif %}
+{% if p.warnings %}
+<h3>Warnings</h3>
+<ul>{% for w in p.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+{% endif %}
+{% endblock %}

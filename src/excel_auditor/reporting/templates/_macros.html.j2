@@ -1,0 +1,133 @@
+{% macro severity_badge(severity) -%}
+<span class="badge {{ severity.value }}">{{ severity.value }}</span>
+{%- endmacro %}
+
+{% macro workbook_overview(wb) -%}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Sheet</th><th>Visibility</th><th>Size</th><th>Formulas</th><th>Constants</th>
+        <th>Hidden rows</th><th>Hidden cols</th><th>Protected</th></tr>
+  </thead>
+  <tbody>
+  {% for sheet in wb.sheets %}
+    <tr>
+      <td>{{ sheet.name }}</td>
+      <td>{% if sheet.visibility.value != 'visible' %}<strong>{{ sheet.visibility.value }}</strong>{% else %}visible{% endif %}</td>
+      <td class="muted">{{ sheet.max_row }} × {{ sheet.max_column }}</td>
+      <td>{{ sheet.formula_cells }}</td>
+      <td>{{ sheet.constant_cells }}</td>
+      <td>{{ sheet.hidden_rows or '—' }}</td>
+      <td>{{ sheet.hidden_columns or '—' }}</td>
+      <td>{{ 'yes' if sheet.protected else '—' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted" style="font-size:12px">
+  Macros: {{ 'present (not analyzed)' if wb.has_macros else 'none detected' }} ·
+  Data connections: {{ 'present' if wb.has_data_connections else 'none detected' }} ·
+  External links: {{ wb.external_links | length }} ·
+  Named ranges: {{ wb.named_ranges | length }}
+  {% if wb.calculation_mode %} · Calculation: {{ wb.calculation_mode }}{% endif %}
+</p>
+{%- endmacro %}
+
+{% macro finding_block(finding) -%}
+<div class="finding {{ finding.severity.value }}">
+  <div class="head">
+    {{ severity_badge(finding.severity) }}
+    <strong>{{ finding.title }}</strong>
+    <span class="muted" style="font-size:12px">confidence: {{ finding.confidence.value }}</span>
+    <span class="rule-id mono">{{ finding.rule_id }}</span>
+    {% if finding.location %}<span class="mono">{{ finding.location.display() }}</span>{% endif %}
+  </div>
+  <div style="margin-top:4px">{{ finding.description }}</div>
+  {% if finding.evidence %}
+  <details>
+    <summary style="font-size:12px">Evidence</summary>
+    <div class="mono" style="font-size:12px">
+      {% for key, value in finding.evidence.items() %}
+        <div><span class="muted">{{ key }}:</span> {{ value }}</div>
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+  {% if finding.suggested_action %}
+  <div class="action">Suggested action: {{ finding.suggested_action }}</div>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+{% macro review_item_block(item) -%}
+<div class="finding {{ item.severity.value }}">
+  <div class="head">
+    {{ severity_badge(item.severity) }}
+    <strong>{{ item.title }}</strong>
+    <span class="muted" style="font-size:12px">confidence: {{ item.confidence.value }}</span>
+    <span class="mono">{{ item.display_location() }}</span>
+    {% for finding in item.findings %}<span class="rule-id mono">{{ finding.rule_id }}</span>{% endfor %}
+  </div>
+  {% if item.change %}
+    <div class="mono" style="margin-top:6px; font-size:12px">
+      <div><span class="muted">before:</span>
+        {% if item.change.old_formula %}{{ item.change.old_formula }}{% elif item.change.old_value is not none %}{{ item.change.old_value }}{% else %}—{% endif %}</div>
+      <div><span class="muted">after:&nbsp;</span>
+        {% if item.change.new_formula %}{{ item.change.new_formula }}{% elif item.change.new_value is not none %}{{ item.change.new_value }}{% else %}—{% endif %}</div>
+    </div>
+    <div style="margin-top:4px">{{ item.change.explanation }}</div>
+  {% endif %}
+  {% for finding in item.findings %}
+    <div style="margin-top:4px">{{ finding.description }}</div>
+  {% endfor %}
+  {% if item.downstream_impact and item.downstream_impact.transitive_dependent_count %}
+    <div class="muted" style="font-size:12px; margin-top:4px">
+      Downstream: {{ item.downstream_impact.transitive_dependent_count }} cell(s)
+      across {{ item.downstream_impact.affected_sheets | join(', ') }}{% if item.downstream_impact.touches_outputs %};
+      reaches output cells ({{ item.downstream_impact.sample_output_cells[:3] | join('; ') }}){% endif %}.
+    </div>
+  {% endif %}
+  {% set evidence_findings = item.findings | selectattr("evidence") | list %}
+  {% if evidence_findings %}
+  <details>
+    <summary style="font-size:12px">Evidence</summary>
+    <div class="mono" style="font-size:12px">
+      {% for finding in evidence_findings %}
+        {% for key, value in finding.evidence.items() %}
+          <div><span class="muted">{{ key }}:</span> {{ value }}</div>
+        {% endfor %}
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+  {% set actions = item.findings | map(attribute="suggested_action") | select | unique | list %}
+  {% if actions %}
+  <div class="action">Suggested action: {{ actions | join(' ') }}</div>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+{% macro change_row(change) -%}
+<tr>
+  <td class="mono">{{ change.sheet_name }}!{{ change.coordinate }}</td>
+  <td>{{ change.change_type.value | replace('_', ' ') }}</td>
+  <td>{{ severity_badge(change.severity) }}</td>
+  <td class="mono">
+    {% if change.old_formula %}{{ change.old_formula }}{% elif change.old_value is not none %}{{ change.old_value }}{% else %}<span class="muted">—</span>{% endif %}
+  </td>
+  <td class="mono">
+    {% if change.new_formula %}{{ change.new_formula }}{% elif change.new_value is not none %}{{ change.new_value }}{% else %}<span class="muted">—</span>{% endif %}
+  </td>
+  <td>
+    {{ change.explanation }}
+    {% if change.downstream_impact and change.downstream_impact.transitive_dependent_count %}
+      <div class="muted" style="font-size:12px">
+        Downstream: {{ change.downstream_impact.transitive_dependent_count }} cell(s)
+        across {{ change.downstream_impact.affected_sheets | join(', ') }}{% if change.downstream_impact.touches_outputs %};
+        reaches output cells ({{ change.downstream_impact.sample_output_cells[:3] | join('; ') }}){% endif %}.
+      </div>
+    {% endif %}
+  </td>
+</tr>
+{%- endmacro %}

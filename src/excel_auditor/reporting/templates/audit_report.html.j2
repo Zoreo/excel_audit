@@ -1,0 +1,59 @@
+{% extends "base.html.j2" %}
+{% import "_macros.html.j2" as macros %}
+
+{% block title %}Workbook Audit — {{ report.workbook.filename }}{% endblock %}
+
+{% block content %}
+<header class="report-header">
+  <h1>Workbook Risk Audit</h1>
+  <div class="meta">
+    {{ report.workbook.filename }} ·
+    {{ report.workbook.sheets | length }} sheet(s) ·
+    {{ report.workbook.total_formula_cells }} formula cell(s)
+  </div>
+</header>
+
+<h2>Executive summary</h2>
+<div class="cards">
+  <div class="card">
+    <div class="level {{ report.risk_level }}">{{ report.risk_level }}</div>
+    <div class="label">Risk level</div>
+  </div>
+  {% for severity in severity_sequence %}
+  <div class="card">
+    <div class="num">{{ report.findings_by_severity.get(severity.value, 0) }}</div>
+    <div class="label">{{ severity.value }}</div>
+  </div>
+  {% endfor %}
+</div>
+<p class="muted">
+  Assessment basis: risk level = highest severity present.
+  Drivers: {{ report.risk_drivers | join(', ') }}.
+</p>
+
+<h2>Workbook overview</h2>
+{{ macros.workbook_overview(report.workbook) }}
+
+{% if report.workbook.external_links %}
+<h2>External dependencies</h2>
+<ul>
+  {% for target in report.workbook.external_links %}
+  <li class="mono">{{ target }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<h2>Findings</h2>
+{% if not report.findings %}
+<p class="muted">No findings. This means no rule fired — not that the workbook is correct.</p>
+{% endif %}
+{% for severity in severity_sequence %}
+  {% set group = findings_by_severity.get(severity.value, []) %}
+  {% if group %}
+  <h3>{{ macros.severity_badge(severity) }} {{ group | length }} finding(s)</h3>
+  {% for finding in group %}
+    {{ macros.finding_block(finding) }}
+  {% endfor %}
+  {% endif %}
+{% endfor %}
+{% endblock %}

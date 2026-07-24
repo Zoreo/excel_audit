@@ -1,0 +1,51 @@
+{% extends "_layout.html.j2" %}
+{% block title %}Ask a verified question{% endblock %}
+{% block content %}
+<h1>Ask a verified question</h1>
+
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+{% if answered %}
+<h2>Answer</h2>
+{% if answered.formatted_value %}<p style="font-size:20px"><strong>{{ answered.formatted_value }}</strong></p>{% endif %}
+{% if answered.message %}<p>{{ answered.message }}</p>{% endif %}
+<p>Status: {{ answered.status.value | replace('_', ' ') }}</p>
+<p><a href="{{ report_url }}">Open the full report with provenance</a></p>
+<hr>
+{% endif %}
+
+{% if confirmation %}
+<h2>Confirmation required</h2>
+<p>{{ confirmation.message }}</p>
+<form action="/ask" method="post">
+  <input type="hidden" name="question" value="{{ question }}">
+  <input type="hidden" name="token" value="{{ token }}">
+  {% for candidate in confirmation.candidates %}
+  <label>
+    <input type="radio" name="pick" value="{{ loop.index }}" {% if loop.first %}checked{% endif %}>
+    {{ candidate.sheet_name }} → {{ candidate.column_name }} ({{ candidate.column_type }})
+  </label>
+  {% endfor %}
+  <input type="hidden" name="choices" value="{{ choices }}" id="choices-field">
+  <button type="submit" onclick="
+    var picked = document.querySelector('input[name=pick]:checked').value;
+    var field = document.getElementById('choices-field');
+    field.value = field.value ? field.value + ',' + picked : picked;">
+    Confirm
+  </button>
+</form>
+{% else %}
+<form action="/ask" method="post" enctype="multipart/form-data">
+  <label for="file">Workbook (.xlsx / .xlsm)</label>
+  <input type="file" id="file" name="file" accept=".xlsx,.xlsm" required>
+  <label for="question">Question</label>
+  <input type="text" id="question" name="question" required
+         value="{{ question or '' }}"
+         placeholder="What was total revenue in 2025? / Какъв е общият оборот за 2025?">
+  <button type="submit">Ask</button>
+</form>
+<p class="muted">Supported: aggregations, filtered counts, grouping, period comparisons,
+deadline lookups and workbook inspection. Numbers are always computed
+deterministically with full provenance.</p>
+{% endif %}
+{% endblock %}

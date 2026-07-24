@@ -1,0 +1,12 @@
+{% extends "_layout.html.j2" %}
+{% block title %}Excel Auditor{% endblock %}
+{% block content %}
+<h1>Excel Auditor</h1>
+<p>Deterministic audit, comparison and verified Q&amp;A for Excel workbooks.</p>
+<ul>
+  <li><a href="/audit">Audit one workbook</a></li>
+  <li><a href="/compare">Compare two workbook versions</a></li>
+  <li><a href="/ask">Ask a verified question</a></li>
+</ul>
+<p class="muted">Have a report id? Open <code>/reports/&lt;id&gt;</code> directly.</p>
+{% endblock %}

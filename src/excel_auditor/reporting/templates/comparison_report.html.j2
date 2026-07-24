@@ -1,0 +1,104 @@
+{% extends "base.html.j2" %}
+{% import "_macros.html.j2" as macros %}
+
+{% block title %}Workbook Comparison — {{ report.old_workbook.filename }} → {{ report.new_workbook.filename }}{% endblock %}
+
+{% block content %}
+<header class="report-header">
+  <h1>Workbook Comparison</h1>
+  <div class="meta">
+    <span class="mono">{{ report.old_workbook.filename }}</span> →
+    <span class="mono">{{ report.new_workbook.filename }}</span>
+  </div>
+</header>
+
+<h2>Executive summary</h2>
+<div class="cards">
+  <div class="card">
+    <div class="level {{ report.risk_level }}">{{ report.risk_level }}</div>
+    <div class="label">Risk level</div>
+  </div>
+  <div class="card">
+    <div class="num">{{ report.summary.total_review_items }}</div>
+    <div class="label">Review items</div>
+  </div>
+  <div class="card">
+    <div class="num">{{ report.summary.total_cell_changes }}</div>
+    <div class="label">Cell changes</div>
+  </div>
+  <div class="card">
+    <div class="num">{{ report.summary.structural_change_count }}</div>
+    <div class="label">Structural changes</div>
+  </div>
+  <div class="card">
+    <div class="num">{{ report.summary.high_impact_changes }}</div>
+    <div class="label">High-impact items</div>
+  </div>
+</div>
+<p class="muted">
+  Assessment basis: risk level = highest severity present.
+  Drivers: {{ report.risk_drivers | join(', ') }}.
+  {% if report.summary.affected_sheets %}Affected sheets: {{ report.summary.affected_sheets | join(', ') }}.{% endif %}
+</p>
+
+<h2>Workbook overview (new version)</h2>
+{{ macros.workbook_overview(report.new_workbook) }}
+
+{% if report.structural_changes %}
+<h2>Structural changes</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Type</th><th>Sheet</th><th>Description</th></tr></thead>
+  <tbody>
+  {% for change in report.structural_changes %}
+    <tr>
+      <td>{{ change.change_type.value | replace('_', ' ') }}</td>
+      <td>{{ change.sheet_name or '—' }}</td>
+      <td>{{ change.description }}
+        {% if change.details %}<span class="muted mono" style="font-size:11px">{{ change.details }}</span>{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+<h2>Review items</h2>
+<p class="muted" style="font-size:13px">
+  Each item unifies the cell change and any audit findings at the same
+  location under a single reconciled severity, so nothing is listed twice.
+</p>
+{% if not report.review_items %}
+<p class="muted">No review items — no changes or findings above formatting level.</p>
+{% endif %}
+{% for severity in severity_sequence %}
+  {% set group = items_by_severity.get(severity.value, []) %}
+  {% if group %}
+    {% if severity.value == 'info' %}
+    <details>
+      <summary>{{ group | length }} informational item(s)</summary>
+      {% for item in group %}{{ macros.review_item_block(item) }}{% endfor %}
+    </details>
+    {% else %}
+    <h3>{{ macros.severity_badge(severity) }} {{ group | length }} item(s)</h3>
+    {% for item in group %}{{ macros.review_item_block(item) }}{% endfor %}
+    {% endif %}
+  {% endif %}
+{% endfor %}
+
+{% if formatting_only %}
+<h2>Formatting-only changes</h2>
+<details>
+  <summary>{{ formatting_only | length }} formatting-only change(s)</summary>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Cell</th><th>Change</th><th>Severity</th><th>Before</th><th>After</th><th>Notes</th></tr></thead>
+    <tbody>
+    {% for change in formatting_only %}{{ macros.change_row(change) }}{% endfor %}
+    </tbody>
+  </table>
+  </div>
+</details>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,67 @@
+{% extends "base.html.j2" %}
+{% import "_macros.html.j2" as macros %}
+
+{% block title %}Workbook Schema — {{ report.workbook_schema.filename }}{% endblock %}
+
+{% block content %}
+<header class="report-header">
+  <h1>Workbook Schema</h1>
+  <div class="meta">{{ report.workbook_schema.filename }}</div>
+</header>
+
+<h2>Sheets</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Sheet</th><th>Visibility</th><th>Formulas</th><th>Hidden rows</th><th>Hidden cols</th></tr></thead>
+  <tbody>
+  {% for sheet in report.workbook_schema.sheets %}
+    <tr>
+      <td>{{ sheet.name }}</td>
+      <td>{% if sheet.visibility.value != 'visible' %}<strong>{{ sheet.visibility.value }}</strong>{% else %}visible{% endif %}</td>
+      <td>{{ 'yes' if sheet.has_formulas else '—' }}</td>
+      <td>{{ sheet.hidden_rows or '—' }}</td>
+      <td>{{ sheet.hidden_columns or '—' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if report.workbook_schema.warnings %}
+<h2>Warnings</h2>
+<ul>
+  {% for warning in report.workbook_schema.warnings %}<li>{{ warning }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+<h2>Detected tables</h2>
+{% if not report.workbook_schema.tables %}
+<p class="muted">No tables with a recognizable header row were detected.</p>
+{% endif %}
+{% for table in report.workbook_schema.tables %}
+<h3>{{ table.sheet_name }} — <span class="mono">{{ table.ref }}</span> · {{ table.row_count }} data row(s)</h3>
+{% if table.notes %}
+<ul class="muted" style="font-size:12px">
+  {% for note in table.notes %}<li>{{ note }}</li>{% endfor %}
+</ul>
+{% endif %}
+<div class="table-wrap" style="margin-bottom:18px">
+<table>
+  <thead><tr><th>Col</th><th>Name</th><th>Type</th><th>Currency</th><th>Missing</th><th>Distinct</th><th>Samples</th></tr></thead>
+  <tbody>
+  {% for column in table.columns %}
+    <tr>
+      <td class="mono">{{ column.letter }}</td>
+      <td>{{ column.name }}{% if column.likely_identifier %} <span class="muted">(id?)</span>{% endif %}</td>
+      <td>{{ column.type.value }}</td>
+      <td>{{ column.currency or '—' }}</td>
+      <td>{{ column.missing_count or '—' }}</td>
+      <td>{{ column.distinct_count }}</td>
+      <td class="muted mono" style="font-size:11px">{{ column.sample_values | join(' · ') }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endfor %}
+{% endblock %}
