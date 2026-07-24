@@ -85,6 +85,197 @@ def test_sheet_reorder_detected(tmp_path: Path):
     assert any(c.change_type == StructuralChangeType.SHEETS_REORDERED for c in structural)
 
 
+def _diff(old_path: Path, new_path: Path):
+    return compare_inventories(
+        inventory_from_path(old_path, workbook_id="old"),
+        inventory_from_path(new_path, workbook_id="new"),
+    )
+
+
+def _renames(structural):
+    return [c for c in structural if c.change_type == StructuralChangeType.SHEET_RENAMED]
+
+
+def _removed_added(structural):
+    removed = [c.sheet_name for c in structural
+               if c.change_type == StructuralChangeType.SHEET_REMOVED]
+    added = [c.sheet_name for c in structural
+             if c.change_type == StructuralChangeType.SHEET_ADDED]
+    return removed, added
+
+
+# Five formula cells: enough signal for inferred rename matching (D3).
+_FORMULA_SHEET = {
+    "A1": 10,
+    "A2": 20,
+    "B1": "=A1*2",
+    "B2": "=A2*2",
+    "B3": "=B1+B2",
+    "B4": "=SUM(A1:A2)",
+    "B5": "=B3-B4",
+    "C1": 100,
+}
+
+
+def test_inferred_rename_with_value_edit_reports_both(tmp_path: Path):
+    """EXCEL-001: rename + edit must not erase the sheet's changes."""
+    old = make_workbook(tmp_path / "old.xlsx", {"Data": dict(_FORMULA_SHEET)})
+    new_cells = dict(_FORMULA_SHEET)
+    new_cells["C1"] = 999  # single value edit -> content no longer identical
+    new = make_workbook(tmp_path / "new.xlsx", {"Data2024": new_cells})
+
+    structural, cell_changes = _diff(old, new)
+    renames = _renames(structural)
+    assert len(renames) == 1
+    assert renames[0].details == {
+        "old_name": "Data", "new_name": "Data2024", "inferred": True
+    }
+    assert "content similarity" in renames[0].description
+    removed, added = _removed_added(structural)
+    assert removed == [] and added == []
+    changes = _changes_by_key(cell_changes)
+    assert changes[("Data2024", "C1")].change_type == ChangeType.VALUE_CHANGED
+    assert changes[("Data2024", "C1")].new_value == 999
+
+
+def test_inferred_rename_with_formula_edit_at_similarity_boundary(tmp_path: Path):
+    """4 of 5 formulas shared = 0.80 similarity: still paired, edit reported."""
+    old = make_workbook(tmp_path / "old.xlsx", {"Data": dict(_FORMULA_SHEET)})
+    new_cells = dict(_FORMULA_SHEET)
+    new_cells["B5"] = "=B3+B4"  # single formula edit
+    new = make_workbook(tmp_path / "new.xlsx", {"Data2024": new_cells})
+
+    structural, cell_changes = _diff(old, new)
+    renames = _renames(structural)
+    assert len(renames) == 1
+    assert renames[0].details["inferred"] is True
+    changes = _changes_by_key(cell_changes)
+    assert changes[("Data2024", "B5")].change_type == ChangeType.FORMULA_CHANGED
+    assert changes[("Data2024", "B5")].old_formula == "=B3-B4"
+    assert changes[("Data2024", "B5")].new_formula == "=B3+B4"
+
+
+def test_genuinely_different_sheets_stay_removed_added(tmp_path: Path):
+    """Q1 -> Q2 with different content must not be paired as a rename."""
+    q1 = {f"B{i}": f"=A{i}*{i}" for i in range(1, 7)}
+    q2 = {f"B{i}": f"=A{i}+{i + 10}" for i in range(1, 7)}
+    old = make_workbook(tmp_path / "old.xlsx", {"Q1": q1})
+    new = make_workbook(tmp_path / "new.xlsx", {"Q2": q2})
+
+    structural, _ = _diff(old, new)
+    assert _renames(structural) == []
+    removed, added = _removed_added(structural)
+    assert removed == ["Q1"] and added == ["Q2"]
+
+
+def test_ambiguous_candidates_pair_nothing(tmp_path: Path):
+    """Two removed and two added sheets, all equally similar: margin fails."""
+    def sheet(marker: int) -> dict:
+        cells = dict(_FORMULA_SHEET)
+        cells["C1"] = marker  # distinct values, identical formulas
+        return cells
+
+    old = make_workbook(tmp_path / "old.xlsx", {"R1": sheet(1), "R2": sheet(2)})
+    new = make_workbook(tmp_path / "new.xlsx", {"N1": sheet(3), "N2": sheet(4)})
+
+    structural, _ = _diff(old, new)
+    assert _renames(structural) == []
+    removed, added = _removed_added(structural)
+    assert sorted(removed) == ["R1", "R2"]
+    assert sorted(added) == ["N1", "N2"]
+
+
+def test_two_clear_renames_both_pair(tmp_path: Path):
+    """Two removed + two added, each with a unique best match: both pair."""
+    sheet_a = dict(_FORMULA_SHEET)
+    sheet_b = {f"B{i}": f"=A{i}+{i}" for i in range(1, 7)} | {"A1": 1}
+    old = make_workbook(tmp_path / "old.xlsx", {"R1": dict(sheet_a), "R2": dict(sheet_b)})
+    new_a = dict(sheet_a)
+    new_a["C1"] = 999
+    new_b = dict(sheet_b)
+    new_b["A1"] = 2
+    new = make_workbook(tmp_path / "new.xlsx", {"N1": new_a, "N2": new_b})
+
+    structural, _ = _diff(old, new)
+    renames = _renames(structural)
+    pairs = {(r.details["old_name"], r.details["new_name"]) for r in renames}
+    assert pairs == {("R1", "N1"), ("R2", "N2")}
+    assert all(r.details["inferred"] is True for r in renames)
+    removed, added = _removed_added(structural)
+    assert removed == [] and added == []
+
+
+def test_few_formula_cells_never_pair_inferred(tmp_path: Path):
+    """Fewer than 5 formula cells: not enough signal for inference."""
+    cells = {"A1": 1, "B1": "=A1*2", "B2": "=A1*3", "B3": "=A1*4", "B4": "=A1*5"}
+    old = make_workbook(tmp_path / "old.xlsx", {"Data": dict(cells)})
+    new_cells = dict(cells)
+    new_cells["A1"] = 2  # edit so the exact-signature path cannot match
+    new = make_workbook(tmp_path / "new.xlsx", {"Data2024": new_cells})
+
+    structural, _ = _diff(old, new)
+    assert _renames(structural) == []
+    removed, added = _removed_added(structural)
+    assert removed == ["Data"] and added == ["Data2024"]
+
+
+def test_pure_rename_is_reference_change_free(tmp_path: Path):
+    """P2-1: cross-sheet references to a renamed sheet are not formula changes."""
+    inputs = {"A1": 1, "A2": 2, "B1": "=A1+A2"}
+    raw = {"A1": 5}
+    old = make_workbook(
+        tmp_path / "old.xlsx",
+        {
+            "Inputs": dict(inputs),
+            "Raw Data": dict(raw),
+            "Summary": {
+                "A1": "=Inputs!B1",
+                "A2": "=SUM(Inputs!A1:A2)",
+                "A3": "='Raw Data'!A1",
+            },
+        },
+    )
+    new = make_workbook(
+        tmp_path / "new.xlsx",
+        {
+            "Assumptions": dict(inputs),
+            "Raw Data 2024": dict(raw),
+            "Summary": {
+                "A1": "=Assumptions!B1",
+                "A2": "=SUM(Assumptions!A1:A2)",
+                "A3": "='Raw Data 2024'!A1",
+            },
+        },
+    )
+
+    structural, cell_changes = _diff(old, new)
+    pairs = {(r.details["old_name"], r.details["new_name"]) for r in _renames(structural)}
+    assert pairs == {("Inputs", "Assumptions"), ("Raw Data", "Raw Data 2024")}
+    assert cell_changes == []  # a pure rename produces zero cell changes
+
+
+def test_rename_plus_real_formula_edit_still_reported(tmp_path: Path):
+    """P2-1: only the pure rename substitution is neutralized."""
+    inputs = {"A1": 1, "A2": 2, "B1": "=A1+A2"}
+    old = make_workbook(
+        tmp_path / "old.xlsx",
+        {"Inputs": dict(inputs), "Summary": {"A1": "=Inputs!B1", "A2": "=Inputs!A1"}},
+    )
+    new = make_workbook(
+        tmp_path / "new.xlsx",
+        {
+            "Assumptions": dict(inputs),
+            "Summary": {"A1": "=Assumptions!B1*2", "A2": "=Assumptions!A1"},
+        },
+    )
+
+    structural, cell_changes = _diff(old, new)
+    assert len(_renames(structural)) == 1
+    changes = _changes_by_key(cell_changes)
+    assert set(changes) == {("Summary", "A1")}  # A2 is the pure rename, silent
+    assert changes[("Summary", "A1")].change_type == ChangeType.FORMULA_CHANGED
+
+
 def test_structural_changes_emit_in_sorted_sheet_order(tmp_path: Path):
     """EXCEL-004: matched-sheet iteration must not depend on set ordering."""
 
