@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import make_workbook
 
+from conftest import make_workbook
 from excel_auditor.analysis.rules import base as rules_base
 from excel_auditor.reporting.html_report import render_audit_html, render_comparison_html
 from excel_auditor.reporting.json_report import to_json

@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from conftest import make_workbook
 from openpyxl import Workbook
 
+from conftest import make_workbook
 from excel_auditor.analysis.workbook_diff import compare_inventories
 from excel_auditor.analysis.workbook_inventory import inventory_from_path
 from excel_auditor.models import ChangeType, StructuralChangeType
