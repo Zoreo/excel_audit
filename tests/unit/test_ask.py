@@ -135,6 +135,41 @@ def test_ask_simple_workbook_no_confirmation(sales_bg_simple):
     assert report.result.value == 628400
 
 
+def test_ask_duplicate_headers_requires_confirmation_then_uses_choice(tmp_path):
+    """QA-001 end to end: Category|Amount|Amount must never resolve silently."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    path = tmp_path / "dup.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    for col, name in enumerate(["Category", "Amount", "Amount"], start=1):
+        ws.cell(row=1, column=col, value=name).font = Font(bold=True)
+    rows = [("a", 10, 1000), ("b", 20, 2000), ("c", 30, 3000)]
+    for i, (category, first, second) in enumerate(rows, start=2):
+        ws.cell(row=i, column=1, value=category)
+        ws.cell(row=i, column=2, value=first)
+        ws.cell(row=i, column=3, value=second)
+    wb.save(path)
+
+    parser = RuleBasedIntentParser()
+    schema = inspect_schema(path).workbook_schema
+    query = parser.parse("What is the total amount?", schema)
+
+    first = answer_query(path, query, exact_columns=False)
+    assert first.result.status == ResultStatus.NEEDS_CONFIRMATION
+    assert first.result.candidate_kind == "value_column"
+    names = [c.column_name for c in first.result.candidates]
+    assert names == ["Amount (column B)", "Amount (column C)"]
+
+    low = answer_query(path, query, exact_columns=False, choices=[1])
+    assert low.result.value == 60
+
+    high = answer_query(path, query, exact_columns=False, choices=[2])
+    assert high.result.value == 6000
+
+
 def test_ask_inspect_workbook(sales_bg):
     parser = RuleBasedIntentParser()
     schema = inspect_schema(sales_bg).workbook_schema

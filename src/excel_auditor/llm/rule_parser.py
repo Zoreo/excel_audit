@@ -24,7 +24,6 @@ from .interface import UnsupportedQuestionError
 
 _YEAR_RE = re.compile(r"\b(19\d{2}|20\d{2})\b")
 _WITHIN_DAYS_RE = re.compile(r"(?:within|до|в рамките на)\s+(\d{1,3})\s+(?:days?|дни|дена)")
-_NUMBER_RE = re.compile(r"(?<![\w.])(\d[\d\s.,]*)(?![\w])")
 _CELL_REF_RE = re.compile(r"((?:'[^']+')|[\w.&-]+)!\$?[A-Za-z]{1,3}\$?\d{1,7}")
 
 _REJECT_MARKERS = [
@@ -90,10 +89,46 @@ _LIST_KEYWORDS = [
 _EXCEED_KEYWORDS = ["exceed", "exceeds", "over", "above", "more than", "над", "повече от"]
 _OVERDUE_KEYWORDS = ["overdue", "просрочен", "просрочени", "просрочена"]
 
+# The threshold is the number directly after an exceed keyword, extracted from
+# the space-preserving normalized text ("over 10 000" keeps its spaces; QA-002).
+_THRESHOLD_RE = re.compile(
+    r"\b(?:"
+    + "|".join(
+        sorted((re.escape(kw) for kw in _EXCEED_KEYWORDS), key=len, reverse=True)
+    )
+    + r")\s+(\d[\d\s.,]*)(?![\w])"
+)
+# "year over year" is comparison phrasing, not a threshold.
+_YOY_RE = re.compile(r"\byear over year\b")
+
 
 def _match_any(question: str, keywords: list[str]) -> bool:
     padded = f" {question} "
     return any(f" {normalize(kw)} " in padded for kw in keywords)
+
+
+def _threshold_filter(norm: str, metric: str | None) -> QueryFilter:
+    """Build the greater-than filter for an exceed-keyword question.
+
+    Refuses (UnsupportedQuestionError -> cannot_answer) when no number follows
+    the keyword or no metric column was identified: running the query
+    unfiltered would silently answer a different question than asked.
+    """
+    match = _THRESHOLD_RE.search(norm)
+    if not match:
+        raise UnsupportedQuestionError(
+            "The question asks for a numeric threshold, but no number could "
+            "be extracted from it. " + _SUPPORTED_HINT
+        )
+    if not metric:
+        raise UnsupportedQuestionError(
+            "The question asks for a numeric threshold, but the column it "
+            "applies to could not be identified. " + _SUPPORTED_HINT
+        )
+    threshold = float(match.group(1).strip().replace(" ", "").replace(",", ""))
+    return QueryFilter(
+        column=metric, operator=FilterOperator.GREATER_THAN, value=threshold
+    )
 
 
 class RuleBasedIntentParser:
@@ -165,27 +200,15 @@ class RuleBasedIntentParser:
                 )
             return SpreadsheetQuery(operation=QueryOperation.NEXT_DEADLINE)
 
-        # List rows with a numeric threshold.
-        if _match_any(norm, _LIST_KEYWORDS) or (
-            "where" in norm and _match_any(norm, _EXCEED_KEYWORDS)
-        ):
-            threshold = None
-            number_match = _NUMBER_RE.search(norm.replace(" ", ""))
-            if number_match and _match_any(norm, _EXCEED_KEYWORDS):
-                threshold = float(
-                    number_match.group(1).replace(",", "").replace(" ", "")
-                )
+        # List rows, optionally with a numeric threshold.
+        threshold_norm = _YOY_RE.sub(" ", norm)
+        wants_threshold = _match_any(threshold_norm, _EXCEED_KEYWORDS)
+        if _match_any(norm, _LIST_KEYWORDS) or ("where" in norm and wants_threshold):
             query = SpreadsheetQuery(
                 operation=QueryOperation.LIST_ROWS, requested_metric=metric
             )
-            if threshold is not None and metric:
-                query.filters.append(
-                    QueryFilter(
-                        column=metric,
-                        operator=FilterOperator.GREATER_THAN,
-                        value=threshold,
-                    )
-                )
+            if wants_threshold:
+                query.filters.append(_threshold_filter(threshold_norm, metric))
             return query
 
         # Aggregations.
@@ -213,6 +236,10 @@ class RuleBasedIntentParser:
             function=function,
             requested_metric=metric,
         )
+        if wants_threshold:
+            # "how many ... over 500" must count the filtered rows, never the
+            # whole table; refuse when the filter cannot be built.
+            query.filters.append(_threshold_filter(threshold_norm, metric))
         if years and len(years) == 1:
             query.filters.append(
                 QueryFilter(
