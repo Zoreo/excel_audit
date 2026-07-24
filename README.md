@@ -4,6 +4,36 @@
 operational models.** Terminal-first, with stored HTML/JSON reports served at
 local URLs, a thin API, and a minimal demo web page.
 
+## The problem this solves
+
+If a spreadsheet drives real decisions in your business — a budget, a cash-flow
+forecast, a pricing model, a loan book — you have three problems that grow
+with every edit:
+
+1. **Silent errors.** A formula overwritten with a hardcoded number, a total
+   that stopped one row short, a SUM that includes itself, a cell nobody knows
+   is driving the P&L. Excel doesn't warn you; the model keeps producing
+   confident numbers that are quietly wrong.
+2. **Version anxiety.** `model_v7_FINAL(2).xlsx` lands in your inbox. What
+   actually changed since the version the board approved? Which changed cell
+   reaches the numbers you present? Eyeballing two workbooks doesn't scale
+   past a dozen cells, and Excel has no diff.
+3. **Answers you can't stand behind.** "What's the total exposure over 500k?"
+   Someone filters, sums, pastes the number into a deck. Was it the right
+   column? The right filter? Nobody can reproduce how the number was made.
+
+excel-auditor is a deterministic engine that treats a workbook the way an
+auditor would: **audit** one version for structural risk, **diff** two
+versions down to the cell with downstream-impact analysis, and answer
+questions over the data with full **provenance** — every number traceable to
+sheet, table, column, filter, and row count. When something is ambiguous it
+asks you; when a question can't be answered safely it says so. It never
+guesses, and no LLM ever touches a number.
+
+Built for finance teams, accountants, auditors, and anyone doing diligence on
+spreadsheets they didn't build — to *assist human reviewers*, not to replace
+them.
+
 Four workflows:
 
 1. **Audit** one `.xlsx` workbook for structural risk.
@@ -21,6 +51,71 @@ computing any number. The optional intent-parsing layer only maps wording to a
 validated structured query (a rule-based EN/BG parser ships by default; an LLM
 provider can be slotted in behind the same interface). Built to *assist human
 reviewers*, not to claim a workbook is financially or mathematically correct.
+
+## See it work in 60 seconds
+
+```bash
+.venv/bin/python scripts/demo_tour.py
+```
+
+The tour builds small workbooks reproducing classic silent-error situations
+and shows the engine's behavior on each. Highlights from the actual output:
+
+```
+Q: "What is the total amount?"  ->  status: needs_confirmation
+   choice 1: Amount (column B) (number)
+   choice 2: Amount (column C) (number)
+   with choice 1: 1,900   [column: Amount (B), status: verified]
+   with choice 2: 19,000  [column: Amount (C), status: verified]
+
+Q: "show rows where amount is over budget"  (no number to filter on)
+   -> REFUSED: The question asks for a numeric threshold, but no number
+      could be extracted from it.
+
+   EA-CIR-001 at Scratch!D11: Circular reference      (=SUM(D1:D11) in D11)
+
+Structural: Worksheet 'Inputs' appears to have been renamed to
+            'Assumptions' (inferred from content similarity).
+Cell edit:  Assumptions!A1 0.05 -> 0.08 [severity: medium]
+   downstream impact: 8 downstream cells, sheets: Assumptions, Summary
+
+Two audit runs byte-identical: True
+workbook_id == sha256(file):   True
+```
+
+A bank export with two columns both named `Amount` gets a confirmation prompt
+instead of a silent 10×-wrong "verified" answer. A threshold question with
+nothing to filter on is refused instead of returning everything. A SUM that
+includes its own cell is flagged. A renamed-then-edited sheet is matched by
+content, the hidden edit surfaced **with its blast radius through a defined
+name**, and the rename itself produces zero diff noise. And the same file
+always produces the same bytes, addressed by its content hash.
+
+`excel-auditor demo` additionally generates two full demo workbooks with ten
+planted anomalies plus complete audit/comparison reports in `./demo_workbooks`.
+
+## Why you can trust the output
+
+These are engineering guarantees, each enforced by regression tests:
+
+- **Ambiguity is never resolved silently.** Two columns sharing a header are
+  physically distinct candidates; you choose, identified by column letter.
+- **Refuse rather than be wrong.** A question that can't be mapped to a safe,
+  fully-specified computation returns `cannot_answer` with the reason — never
+  a plausible-looking number for a different question.
+- **Every answer carries provenance**: workbook, sheet, table range, chosen
+  columns, applied filters, rows included/excluded, and assumptions.
+- **Reports are evidence.** Identical input produces byte-identical output;
+  `workbook_id` is the file's SHA-256, so a report is verifiably tied to the
+  exact file it describes. Inject `--generated-at` and diff reports directly.
+- **Incomplete analysis is visible.** If an analysis rule fails, the report
+  says so (`failed_rules` + a coverage warning) instead of looking clean.
+- **Impact analysis sees through defined names and tables.** `=GrowthRate*2`
+  and `=SUM(Table1[Amount])` carry real downstream-impact counts; anything
+  genuinely unresolvable is marked *unknown* rather than reported as zero.
+- **Your files stay yours.** Local-only processing, uploads deleted on every
+  exit path (TTL sweep for abandoned flows), a purge that actually purges,
+  and no external service ever sees workbook content.
 
 ## What it detects
 
@@ -142,7 +237,7 @@ production needs authentication (documented limitation).
 ### Tests & checks
 
 ```bash
-.venv/bin/python -m pytest      # 141 tests
+.venv/bin/python -m pytest      # 233 tests
 .venv/bin/ruff check src tests
 .venv/bin/mypy src/excel_auditor
 ```
@@ -164,6 +259,17 @@ The query/ask suites use generated sales fixtures with Bulgarian, English and
 transliterated headers, gross + net revenue columns (forcing confirmation),
 currency number formats, blank values, subtotal rows (excluded from sums,
 verified), forecast/actual variants and multiple date columns.
+
+Adversarial suites added with schema v2 cover: golden byte-comparison of
+JSON/HTML reports across subprocesses with different hash seeds; duplicate
+column headers through resolution, frames, filters and group-by; threshold
+phrasing (EN/BG, thousands separators, refusal cases); self-referencing and
+name-routed circular formulas; defined-name/table resolution edge cases
+(multi-area, constants, scope shadowing, `#REF!`); inferred sheet renames
+(similarity thresholds, ambiguity, no-false-pairing); crashed-rule surfacing;
+report-store collision/legacy-id behavior; the full web-ask upload lifecycle
+(leak regressions, confirmation round-trip, TTL sweep); and cross-fix
+interaction tests combining the above.
 
 ## Architecture
 
@@ -246,6 +352,41 @@ the only place a language model may ever participate.
   and Bulgarian only; anything else is rejected with a clear limitation
   message rather than guessed at.
 - Report URLs are unauthenticated random ids — local POC only.
+
+## What's new — report schema v2 (2026-07)
+
+An independent audit of the codebase was commissioned, its findings verified
+and re-ranked, and every confirmed blocker remediated and regression-tested
+(141 → 233 tests). The full paper trail lives in `docs/audits/`
+(`ranked_report_findings.md`, `remediation_plan.md`, `remediation_progress.md`).
+What changed, in user terms:
+
+- **Deterministic reports.** `workbook_id` is now the file's full SHA-256
+  (was a random uuid); structural changes emit in stable order; `generated_at`
+  is injectable (`--generated-at`) — identical input now yields byte-identical
+  reports. JSON carries `report_schema_version: "2"` so consumers can detect
+  the id-format change.
+- **Duplicate column headers are confirmed, not guessed** — previously the
+  later column silently overwrote the earlier one and the answer came back
+  `verified` from the wrong column.
+- **Numeric-threshold questions filter or refuse** — previously "over 500"
+  could be silently dropped and the unfiltered result returned as `verified`.
+- **Self-referencing circular formulas are detected** (`=SUM(D1:D11)` in
+  `D11`), including cycles routed through defined names.
+- **Defined names and structured table references resolve into the dependency
+  graph** — named inputs now show their true downstream impact instead of
+  zero; unresolvable tokens are marked *unknown*, never mis-resolved.
+- **Renamed-and-edited sheets are matched by content similarity** — the edits
+  are reported (previously they vanished), the rename is labeled inferred, and
+  pure renames no longer flood the diff with bogus formula changes.
+- **Crashed analysis rules are visible in the report** (`failed_rules`,
+  limitations, risk drivers, HTML warning) instead of the report looking
+  clean.
+- **Upload lifecycle hardened**: the web ask flow deletes the uploaded file on
+  every exit path (errors included) except the confirmation round-trip, with
+  a TTL sweep for abandoned flows; report bodies live in exactly one place so
+  the documented purge really purges; report ids widened to 128-bit with
+  no-overwrite guarantees.
 
 See `HANDOFF.md` for the full engineering handoff (decisions, assumptions,
 shortcuts, uncertain areas).
