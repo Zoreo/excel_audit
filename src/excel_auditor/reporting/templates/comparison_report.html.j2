@@ -41,6 +41,18 @@
   {% if report.summary.affected_sheets %}Affected sheets: {{ report.summary.affected_sheets | join(', ') }}.{% endif %}
 </p>
 
+{% if report.failed_rules %}
+<div class="finding high">
+  <div class="head">
+    <span class="badge high">warning</span>
+    <strong>Analysis coverage incomplete</strong>
+  </div>
+  {{ report.failed_rules | length }} analysis rule(s) failed to run:
+  <span class="mono">{{ report.failed_rules | join(', ') }}</span>.
+  Their checks were not applied; results may be incomplete.
+</div>
+{% endif %}
+
 <h2>Workbook overview (new version)</h2>
 {{ macros.workbook_overview(report.new_workbook) }}
 
