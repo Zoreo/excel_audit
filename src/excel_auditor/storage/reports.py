@@ -20,7 +20,11 @@ from pathlib import Path
 
 from ..config import Settings, get_settings
 
-_ID_RE = re.compile(r"^[0-9a-f]{8}$")
+# New ids are 128-bit (32 hex chars); 8-hex ids predate the widening and must
+# stay loadable so previously stored reports do not 404.
+_ID_RE = re.compile(r"^(?:[0-9a-f]{8}|[0-9a-f]{32})$")
+
+_MAX_ID_ATTEMPTS = 16
 
 
 @dataclass(frozen=True)
@@ -39,18 +43,31 @@ class ReportStore:
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def save(self, *, kind: str, report_json: str, report_html: str) -> ReportRef:
-        report_id = secrets.token_hex(4)
-        json_path = self._dir / f"{report_id}.json"
-        html_path = self._dir / f"{report_id}.html"
-        json_path.write_text(report_json, encoding="utf-8")
-        html_path.write_text(report_html, encoding="utf-8")
-        return ReportRef(
-            report_id=report_id,
-            kind=kind,
-            json_path=json_path,
-            html_path=html_path,
-            url=self.url_for(report_id),
-        )
+        # Exclusive create ("x") so an id collision can never silently
+        # overwrite an existing report; on collision pick a fresh id.
+        for _ in range(_MAX_ID_ATTEMPTS):
+            report_id = secrets.token_hex(16)
+            json_path = self._dir / f"{report_id}.json"
+            html_path = self._dir / f"{report_id}.html"
+            try:
+                with open(json_path, "x", encoding="utf-8") as fh:
+                    fh.write(report_json)
+            except FileExistsError:
+                continue
+            try:
+                with open(html_path, "x", encoding="utf-8") as fh:
+                    fh.write(report_html)
+            except FileExistsError:
+                json_path.unlink(missing_ok=True)
+                continue
+            return ReportRef(
+                report_id=report_id,
+                kind=kind,
+                json_path=json_path,
+                html_path=html_path,
+                url=self.url_for(report_id),
+            )
+        raise RuntimeError("Could not allocate a unique report id.")
 
     def url_for(self, report_id: str) -> str:
         return f"{self._settings.base_url}/reports/{report_id}"
