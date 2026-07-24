@@ -41,6 +41,9 @@ class Settings:
     max_zip_entries: int = field(default_factory=lambda: _env_int("MAX_ZIP_ENTRIES", 10_000))
     max_zip_ratio: int = field(default_factory=lambda: _env_int("MAX_ZIP_RATIO", 200))
     max_range_cells: int = field(default_factory=lambda: _env_int("MAX_RANGE_CELLS", 10_000))
+    web_upload_ttl_seconds: int = field(
+        default_factory=lambda: _env_int("WEB_UPLOAD_TTL_SECONDS", 3600)
+    )
     log_level: str = field(
         default_factory=lambda: os.environ.get(_ENV_PREFIX + "LOG_LEVEL", "INFO")
     )

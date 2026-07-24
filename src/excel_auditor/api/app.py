@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     settings.ensure_dirs()
+    # Startup sweep of parked /ask uploads (abandonment/crash leftovers);
+    # /ask submissions also sweep opportunistically. No background thread.
+    web_routes.sweep_web_uploads(settings)
 
     app = FastAPI(
         title="Excel Auditor",
