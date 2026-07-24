@@ -100,16 +100,28 @@ def _group_repeated(findings: list[Finding]) -> list[Finding]:
     return out
 
 
-def run_all_rules(ctx: AuditContext) -> list[Finding]:
+def run_all_rules_with_failures(ctx: AuditContext) -> tuple[list[Finding], list[str]]:
+    """Run every registered rule; return (findings, ids of rules that raised).
+
+    Per-rule isolation stays: a broken rule must never sink the whole audit,
+    but its id is reported so the delivered artifact shows incomplete coverage.
+    """
     findings: list[Finding] = []
+    failed_rules: list[str] = []
     for rule_cls in ALL_RULES:
         rule = rule_cls()
         try:
             findings.extend(rule.run(ctx))
         except Exception:  # a broken rule must never sink the whole audit
             logger.exception("Rule %s failed", rule_cls.rule_id)
+            failed_rules.append(rule_cls.rule_id)
     findings = _group_repeated(findings)
     findings.sort(key=lambda f: SEVERITY_ORDER[f.severity], reverse=True)
+    return findings, failed_rules
+
+
+def run_all_rules(ctx: AuditContext) -> list[Finding]:
+    findings, _ = run_all_rules_with_failures(ctx)
     return findings
 
 

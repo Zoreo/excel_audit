@@ -78,11 +78,13 @@ def summarize_workbook(inventory: WorkbookInventory) -> WorkbookSummary:
 class AuditReport(BaseModel):
     """Standalone risk audit of a single workbook."""
 
+    report_schema_version: str = "2"
     engine_version: str
     generated_at: datetime
     workbook: WorkbookSummary
     findings: list[Finding] = Field(default_factory=list)
     findings_by_severity: dict[str, int] = Field(default_factory=dict)
+    failed_rules: list[str] = Field(default_factory=list)
     risk_level: str = "minimal"
     risk_drivers: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
