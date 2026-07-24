@@ -57,6 +57,42 @@ def test_cycle_does_not_crash_and_is_reported(tmp_path: Path):
     assert {("Loop", "A1"), ("Loop", "B1")} == set(cycles[0])
 
 
+def test_self_loop_detected_and_terminates(tmp_path: Path):
+    path = make_workbook(
+        tmp_path / "selfloop.xlsx",
+        {
+            "Loop": {
+                "A1": "=A1+1",
+                **{f"D{r}": r for r in range(1, 11)},
+                "D11": "=SUM(D1:D11)",
+            }
+        },
+    )
+    inventory = inventory_from_path(path)
+    graph = DependencyGraph.build(inventory)
+    assert graph.self_loops == {("Loop", "A1"), ("Loop", "D11")}
+    # self-edges stay out of traversal structures: BFS terminates
+    assert ("Loop", "A1") not in graph.transitive_dependents(("Loop", "A1"))
+    # ... but both self-loop forms surface as single-cell cycle components
+    assert sorted(graph.cycles()) == [[("Loop", "A1")], [("Loop", "D11")]]
+    # ... and impact reports them as circular
+    assert impact_for(graph, inventory, ("Loop", "A1")).is_circular
+    assert impact_for(graph, inventory, ("Loop", "D11")).is_circular
+
+
+def test_self_loop_inside_multi_cell_cycle_not_double_reported(tmp_path: Path):
+    path = make_workbook(
+        tmp_path / "mixedcycle.xlsx",
+        {"Loop": {"A1": "=A1+B1", "B1": "=A1"}},
+    )
+    inventory = inventory_from_path(path)
+    graph = DependencyGraph.build(inventory)
+    cycles = graph.cycles()
+    assert len(cycles) == 1  # no extra [A1] singleton alongside {A1, B1}
+    assert set(cycles[0]) == {("Loop", "A1"), ("Loop", "B1")}
+    assert impact_for(graph, inventory, ("Loop", "A1")).is_circular
+
+
 def test_whole_column_reference_clamped(tmp_path: Path):
     path = make_workbook(
         tmp_path / "wholecol.xlsx",

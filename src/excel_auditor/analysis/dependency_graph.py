@@ -55,6 +55,14 @@ class DependencyGraph:
     dependents: dict[Key, set[Key]] = field(default_factory=lambda: defaultdict(set))
     precedents: dict[Key, set[Key]] = field(default_factory=lambda: defaultdict(set))
     external_refs: dict[Key, set[str]] = field(default_factory=lambda: defaultdict(set))
+    # Cells whose formulas reference themselves (directly or via a range that
+    # covers them). Kept out of dependents/precedents so BFS still terminates.
+    self_loops: set[Key] = field(default_factory=set)
+    # Formula cells containing name-like tokens (defined names, structured
+    # table references) that could not be parsed as cell references. While
+    # non-empty, dependent counts computed from this graph may be understated
+    # for ANY cell — the queried cell could be the unresolved name's target.
+    unresolved_name_cells: set[Key] = field(default_factory=set)
     truncated_ranges: int = 0
 
     # ------------------------------------------------------------------ build
@@ -73,6 +81,10 @@ class DependencyGraph:
                 for token in reference_tokens(record.formula):
                     parsed = parse_reference(token.value)
                     if parsed is None:
+                        # Defined name or structured table reference: no edges
+                        # yet (full resolution is a follow-up), so record that
+                        # impacts from this graph may be understated.
+                        graph.unresolved_name_cells.add(dependent)
                         continue
                     if parsed.is_external:
                         graph.external_refs[dependent].add(parsed.raw)
@@ -111,6 +123,7 @@ class DependencyGraph:
                         for c in range(c1, c2 + 1):
                             referenced: Key = (target_sheet.name, f"{get_column_letter(c)}{r}")
                             if referenced == dependent:
+                                graph.self_loops.add(dependent)
                                 continue
                             graph.dependents[referenced].add(dependent)
                             graph.precedents[dependent].add(referenced)
@@ -179,8 +192,15 @@ class DependencyGraph:
                         component.append(w)
                         if w == node:
                             break
-                    if len(component) > 1 or component[0] in adjacency.get(component[0], set()):
+                    if len(component) > 1:
                         components.append(component)
+
+        # Self-edges are kept out of the adjacency (so traversal terminates),
+        # so self-loops surface here as single-cell components instead.
+        in_multi_cell_component = {node for component in components for node in component}
+        for key in sorted(self.self_loops):
+            if key not in in_multi_cell_component:
+                components.append([key])
         return components
 
 
@@ -247,5 +267,6 @@ def impact_for(
         touches_outputs=bool(outputs),
         sample_output_cells=outputs,
         sample_direct_dependents=[f"{s}!{c}" for s, c in sorted(direct)[:20]],
-        is_circular=key in transitive,
+        is_circular=key in transitive or key in graph.self_loops,
+        has_unresolved_names=bool(graph.unresolved_name_cells),
     )
