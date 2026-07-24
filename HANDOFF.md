@@ -139,7 +139,9 @@ Docker: `docker compose up --build` (API on :8000, data volume mounted).
 
 - Sync request handling; "job" records are written already-completed.
 - Web ask flow parks the upload under `artifacts/uploads/{token}` between
-  confirmation steps; deleted on answer, but abandoned tokens are not GC'd.
+  confirmation steps; deleted on every exit path (errors included) except the
+  needs-confirmation return, and abandoned tokens are GC'd by a TTL sweep
+  (default 1 h) at startup and on each ask submission.
 - Currency detection is symbol-sniffing on number formats (€/лв/$/£ → code).
 - Grouping supports single-token dimensions (`by region`, `по региони`);
   multi-word dimensions aren't parsed.
@@ -170,9 +172,16 @@ Docker: `docker compose up --build` (API on :8000, data volume mounted).
 - `concepts_in_text` matches whole words after normalization — heavily inflected
   Bulgarian phrasing outside the vocabulary won't match (question is then
   rejected as unsupported rather than answered wrongly).
-- Structured table references (`Tbl[[#All],[Col]]`) tokenize inconsistently in
-  openpyxl; they are treated as opaque names (no crash, no false externals) —
-  verified by test, but dependency edges through them are not built.
+- Defined names and structured table references (`MyInput`, `Table1[Col]`,
+  `Table1[]`) are resolved into dependency-graph edges, including multi-area
+  names, sheet-scoped shadowing, and totals-row exclusion. Genuinely
+  unresolvable tokens (unknown/`#REF!`/formula-valued names, item specifiers
+  like `Tbl[[#All],[Col]]`) build no edges and instead set the
+  `has_unresolved_names` impact marker (JSON reports only; HTML does not
+  render the marker yet), which caps confidence so a possibly-understated
+  impact is never reported as a confident zero. Table resolution assumes
+  Excel's default single header row (the inventory does not record
+  `headerRowCount`/`totalsRowCount`).
 - Formatting-only detection compares a compact style signature (number format,
   bold/italic/underline, fill); exotic style changes outside it are invisible.
 - Grouped month keys sort lexicographically (fine for YYYY-MM).
