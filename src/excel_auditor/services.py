@@ -59,6 +59,7 @@ def audit_workbook(
     *,
     settings: Settings | None = None,
     filename: str | None = None,
+    generated_at: datetime | None = None,
 ) -> AuditReport:
     settings = settings or get_settings()
     inventory = inventory_from_path(Path(path), settings=settings, filename=filename)
@@ -76,7 +77,7 @@ def audit_workbook(
     )
     return AuditReport(
         engine_version=__version__,
-        generated_at=datetime.now(UTC),
+        generated_at=generated_at or datetime.now(UTC),
         workbook=summarize_workbook(inventory),
         findings=findings,
         findings_by_severity=by_severity,
@@ -93,6 +94,7 @@ def compare_workbooks(
     settings: Settings | None = None,
     old_filename: str | None = None,
     new_filename: str | None = None,
+    generated_at: datetime | None = None,
 ) -> WorkbookComparison:
     settings = settings or get_settings()
     old_inventory = inventory_from_path(
@@ -158,7 +160,7 @@ def compare_workbooks(
 
     return WorkbookComparison(
         engine_version=__version__,
-        generated_at=datetime.now(UTC),
+        generated_at=generated_at or datetime.now(UTC),
         old_workbook=summarize_workbook(old_inventory),
         new_workbook=summarize_workbook(new_inventory),
         structural_changes=structural,

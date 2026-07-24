@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from conftest import make_workbook
+from openpyxl import Workbook
+
 from excel_auditor.analysis.workbook_diff import compare_inventories
 from excel_auditor.analysis.workbook_inventory import inventory_from_path
 from excel_auditor.models import ChangeType, StructuralChangeType
@@ -81,6 +83,45 @@ def test_sheet_reorder_detected(tmp_path: Path):
         inventory_from_path(new, workbook_id="new"),
     )
     assert any(c.change_type == StructuralChangeType.SHEETS_REORDERED for c in structural)
+
+
+def test_structural_changes_emit_in_sorted_sheet_order(tmp_path: Path):
+    """EXCEL-004: matched-sheet iteration must not depend on set ordering."""
+
+    def build(path: Path, *, changed: bool) -> Path:
+        wb = Workbook()
+        default = wb.active
+        for index in range(1, 8):
+            name = f"S{index}"
+            ws = default if index == 1 else wb.create_sheet()
+            ws.title = name
+            ws["A1"] = index
+            if changed:
+                if name in ("S2", "S5"):
+                    ws.sheet_state = "hidden"
+                if name == "S3":
+                    ws.merge_cells("A2:B3")
+                if name == "S6":
+                    ws.merge_cells("C1:D2")
+                if name in ("S4", "S7"):
+                    ws.row_dimensions[3].hidden = True
+        wb.save(path)
+        return path
+
+    old = build(tmp_path / "old.xlsx", changed=False)
+    new = build(tmp_path / "new.xlsx", changed=True)
+    structural, _ = compare_inventories(
+        inventory_from_path(old, workbook_id="old"),
+        inventory_from_path(new, workbook_id="new"),
+    )
+    assert [(c.change_type, c.sheet_name) for c in structural] == [
+        (StructuralChangeType.SHEET_VISIBILITY_CHANGED, "S2"),
+        (StructuralChangeType.MERGED_RANGES_CHANGED, "S3"),
+        (StructuralChangeType.HIDDEN_ROWS_CHANGED, "S4"),
+        (StructuralChangeType.SHEET_VISIBILITY_CHANGED, "S5"),
+        (StructuralChangeType.MERGED_RANGES_CHANGED, "S6"),
+        (StructuralChangeType.HIDDEN_ROWS_CHANGED, "S7"),
+    ]
 
 
 def test_constant_to_formula(tmp_path: Path):

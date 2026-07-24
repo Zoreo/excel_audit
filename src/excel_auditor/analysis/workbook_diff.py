@@ -42,7 +42,7 @@ def _match_sheets(
     """Return (matched name pairs, removed, added, renamed pairs)."""
     old_names = {s.name for s in old.sheets}
     new_names = {s.name for s in new.sheets}
-    matched = [(n, n) for n in old_names & new_names]
+    matched = [(n, n) for n in sorted(old_names & new_names)]
     removed = sorted(old_names - new_names)
     added = sorted(new_names - old_names)
 
