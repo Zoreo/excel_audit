@@ -1,10 +1,12 @@
 # Remediation Progress — where we left off
 
 - **Last updated:** 2026-07-24
-- **State:** ALL remediation work is implemented, verified, and integrated on
-  `remediation/verified-findings` @ `3200f21`. **Stopped at the final safety
-  gate: waiting for approval to merge into `main`.** Nothing has been merged
-  to `main`, pushed, or deleted.
+- **State:** **COMPLETE.** Merged into `main` (merge commit `a3f8508`) with
+  lead approval. Post-merge verification on `main`: 233 tests passed,
+  `ruff check` clean, `mypy` clean. Demo report artifacts regenerated
+  (schema v2, sha256 workbook ids). Worker branches and worktrees cleaned up;
+  `remediation/verified-findings` retained as the integration record. Not
+  pushed to any remote.
 - **Companion docs:** `docs/audits/ranked_report_findings.md` (verified audit,
   source of truth) · `docs/audits/remediation_plan.md` (approved plan +
   decisions D1–D6).
@@ -72,21 +74,12 @@ checkout's `src`**. Running tests inside any worktree MUST override it:
 
 Without the override you silently test `main`'s code, not the worktree's.
 
-## Remaining steps (in order)
+## Remaining steps
 
-1. **AWAITING APPROVAL:** merge `remediation/verified-findings` into `main`
-   (fast-forward is not possible; use a merge commit). Everything below waits
-   on this.
-2. Regenerate the **untracked** demo report artifacts in the main checkout
-   (`demo_workbooks/audit_v2.json|html`, `comparison.json|html`) — they were
-   never committed, so they could not be "regenerated and committed" during
-   T10; they still carry old uuid ids and schema v1. After merge:
-   `excel-auditor audit demo_workbooks/financial_model_v2.xlsx --json-output … --html-output …`
-   and the equivalent `compare` (add `--generated-at` for reproducible bytes).
-   Decide whether to start tracking them.
-3. Optional cleanup once merged: delete the four `fix/*` branches and remove
-   the scratchpad worktrees (`git worktree remove …`). Scratchpad worktrees
-   vanish with the session anyway; run `git worktree prune` afterwards.
+None — merge (`a3f8508`), demo-artifact regeneration, and branch/worktree
+cleanup were all completed on 2026-07-24. The demo report artifacts remain
+gitignored local outputs, regenerated with `--generated-at
+2026-07-24T12:00:00+00:00`. The repository has not been pushed to any remote.
 
 ## Known limitations / accepted risks (carried into the final report)
 
