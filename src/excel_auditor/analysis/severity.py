@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from ..models import ChangeType, Confidence, DependencyImpact, Severity
-from ..models.enums import SEVERITY_ORDER
+from ..models.enums import CONFIDENCE_ORDER, SEVERITY_ORDER
 
 _BASE_CHANGE_SEVERITY: dict[ChangeType, tuple[Severity, Confidence]] = {
     ChangeType.FORMULA_TO_CONSTANT: (Severity.HIGH, Confidence.HIGH),
@@ -50,12 +50,16 @@ def classify_cell_change(
     normalized_equal: bool = False,
     impact: DependencyImpact | None = None,
 ) -> tuple[Severity, Confidence]:
-    """Base severity per change type, with two documented adjustments:
+    """Base severity per change type, with three documented adjustments:
 
     - a formula whose raw text changed but whose normalized pattern is
       identical (e.g. references shifted by a row insertion) drops to INFO;
     - a change whose downstream impact reaches output-like cells or 10+
-      dependents is escalated one level.
+      dependents is escalated one level;
+    - a change whose downstream impact may be understated (the workbook's
+      formulas use unresolved defined names/tables) and did NOT already
+      escalate has its confidence capped at MEDIUM — we cannot confidently
+      claim the impact is low.
     """
     severity, confidence = _BASE_CHANGE_SEVERITY[change_type]
     if change_type == ChangeType.FORMULA_CHANGED and normalized_equal:
@@ -65,6 +69,9 @@ def classify_cell_change(
     ):
         if SEVERITY_ORDER[severity] < SEVERITY_ORDER[Severity.HIGH]:
             severity = _escalate(severity)
+    elif impact is not None and impact.has_unresolved_names:
+        if CONFIDENCE_ORDER[confidence] > CONFIDENCE_ORDER[Confidence.MEDIUM]:
+            confidence = Confidence.MEDIUM
     return severity, confidence
 
 

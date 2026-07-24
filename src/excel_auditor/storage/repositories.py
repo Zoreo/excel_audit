@@ -23,8 +23,6 @@ class JobRecord:
     created_at: str
     source_names: list[str]
     summary: dict[str, Any] | None
-    report_json: str | None
-    report_html: str | None
 
 
 class JobRepository:
@@ -38,23 +36,19 @@ class JobRepository:
         kind: str,
         source_names: list[str],
         summary: dict[str, Any],
-        report_json: str,
-        report_html: str,
     ) -> str:
         job_id = uuid4().hex
         with connect(self._db_path) as conn:
             conn.execute(
                 "INSERT INTO jobs (id, kind, status, created_at, source_names,"
-                " summary_json, report_json, report_html)"
-                " VALUES (?, ?, 'completed', ?, ?, ?, ?, ?)",
+                " summary_json)"
+                " VALUES (?, ?, 'completed', ?, ?, ?)",
                 (
                     job_id,
                     kind,
                     datetime.now(UTC).isoformat(),
                     json.dumps(source_names),
                     json.dumps(summary),
-                    report_json,
-                    report_html,
                 ),
             )
         return job_id
@@ -70,8 +64,14 @@ class JobRepository:
         return job_id
 
     def get(self, job_id: str) -> JobRecord:
+        # Explicit column list: legacy databases may still carry the retired
+        # report_json/report_html blob columns, which are ignored on purpose.
         with connect(self._db_path) as conn:
-            row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            row = conn.execute(
+                "SELECT id, kind, status, error, created_at, source_names,"
+                " summary_json FROM jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
         if row is None:
             raise JobNotFoundError(f"No job with id {job_id!r}.")
         return JobRecord(
@@ -82,6 +82,4 @@ class JobRepository:
             created_at=row["created_at"],
             source_names=json.loads(row["source_names"] or "[]"),
             summary=json.loads(row["summary_json"]) if row["summary_json"] else None,
-            report_json=row["report_json"],
-            report_html=row["report_html"],
         )

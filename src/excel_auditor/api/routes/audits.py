@@ -44,8 +44,6 @@ def create_audit(request: Request, file: UploadFile) -> JobResponse:
             kind="audit",
             source_names=[display_name],
             summary=summary,
-            report_json=report_json,
-            report_html=report_html,
         )
         record = repo.get(job_id)
         return JobResponse(

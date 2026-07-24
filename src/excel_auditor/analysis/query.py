@@ -48,6 +48,18 @@ class ResolvedQuery:
     assumptions: list[str] | None = None
 
 
+def frame_column_key(table: TableSchema, column: ColumnSchema) -> str:
+    """Frame key addressing one PHYSICAL column of the table.
+
+    Plain header text when it is unique; suffixed with the column letter when
+    several columns share a header, so the later duplicate never overwrites
+    the earlier one and every lookup hits the chosen physical column.
+    """
+    if sum(1 for c in table.columns if c.name == column.name) > 1:
+        return f"{column.name} ({column.letter})"
+    return column.name
+
+
 def load_table_frame(
     inventory: WorkbookInventory, table: TableSchema
 ) -> tuple[pd.DataFrame, int, int]:
@@ -55,6 +67,7 @@ def load_table_frame(
 
     Returns (frame, rows_total_in_block, rows_excluded_as_totals).
     Formula cells contribute their cached value when the file has one.
+    Columns are keyed by frame_column_key so duplicate headers are preserved.
     """
     sheet = inventory.sheet(table.sheet_name)
     if sheet is None:
@@ -71,7 +84,7 @@ def load_table_frame(
         for row in body_rows:
             record = sheet.cells.get(f"{column.letter}{row}")
             values.append(record.value if record is not None else None)
-        data[column.name] = values
+        data[frame_column_key(table, column)] = values
     frame = pd.DataFrame(data)
     # Drop rows that are entirely empty (spacer noise inside the block).
     frame = frame.dropna(how="all").reset_index(drop=True)
@@ -87,23 +100,36 @@ def _as_number(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
 
 
-def _filter_description(column: ColumnSchema, flt: QueryFilter) -> str:
+def _filter_description(name: str, flt: QueryFilter) -> str:
     if flt.operator == FilterOperator.YEAR_EQUALS:
-        return f"year({column.name}) = {flt.value}"
+        return f"year({name}) = {flt.value}"
     if flt.operator in (FilterOperator.IS_BLANK, FilterOperator.NOT_BLANK):
-        return f"{column.name} {flt.operator.value.replace('_', ' ')}"
-    return f"{column.name} {flt.operator.value.replace('_', ' ')} {flt.value}"
+        return f"{name} {flt.operator.value.replace('_', ' ')}"
+    return f"{name} {flt.operator.value.replace('_', ' ')} {flt.value}"
 
 
 def _apply_filter(
-    frame: pd.DataFrame, column: ColumnSchema, flt: QueryFilter, warnings: list[str]
+    frame: pd.DataFrame,
+    table: TableSchema,
+    column: ColumnSchema,
+    flt: QueryFilter,
+    warnings: list[str],
 ) -> pd.DataFrame:
-    series = frame[column.name]
+    series = frame[frame_column_key(table, column)]
     op = flt.operator
     if op == FilterOperator.IS_BLANK:
         return frame[series.isna()]
     if op == FilterOperator.NOT_BLANK:
         return frame[series.notna()]
+
+    if flt.value is None:
+        # Every remaining operator needs a comparison value; a schema-valid
+        # query may still arrive without one (QueryFilter.value defaults to
+        # None), which must be a clean cannot_answer, not a TypeError.
+        raise ValueError(
+            f"Filter on '{column.name}' "
+            f"({flt.operator.value.replace('_', ' ')}) is missing a value."
+        )
 
     if op == FilterOperator.YEAR_EQUALS:
         dates = _as_datetime(series)
@@ -194,10 +220,13 @@ def format_value(value: Any, currency: str | None, function: AggregateFunction |
     return str(value)
 
 
-def _group_key_series(frame: pd.DataFrame, column: ColumnSchema) -> pd.Series:
+def _group_key_series(
+    frame: pd.DataFrame, table: TableSchema, column: ColumnSchema
+) -> pd.Series:
+    key = frame_column_key(table, column)
     if column.type == ColumnType.DATE:
-        return _as_datetime(frame[column.name]).dt.strftime("%Y-%m")
-    return frame[column.name].map(
+        return _as_datetime(frame[key]).dt.strftime("%Y-%m")
+    return frame[key].map(
         lambda v: v.strip() if isinstance(v, str) else v
     )
 
@@ -214,18 +243,26 @@ def execute_query(inventory: WorkbookInventory, resolved: ResolvedQuery) -> Quer
 
     filters = resolved.filters or []
     for column, flt in filters:
-        frame = _apply_filter(frame, column, flt, warnings)
+        frame = _apply_filter(frame, table, column, flt, warnings)
 
     provenance = QueryProvenance(
         workbook=inventory.filename,
         sheet=table.sheet_name,
         table_ref=table.ref,
-        value_column=resolved.value_column.name if resolved.value_column else None,
-        date_column=resolved.date_column.name if resolved.date_column else None,
+        value_column=(
+            frame_column_key(table, resolved.value_column)
+            if resolved.value_column
+            else None
+        ),
+        date_column=(
+            frame_column_key(table, resolved.date_column)
+            if resolved.date_column
+            else None
+        ),
         operation=resolved.operation.value,
         function=resolved.function.value if resolved.function else None,
-        filters=[_filter_description(c, f) for c, f in filters],
-        group_by=[c.name for c in (resolved.group_by or [])],
+        filters=[_filter_description(frame_column_key(table, c), f) for c, f in filters],
+        group_by=[frame_column_key(table, c) for c in (resolved.group_by or [])],
         rows_total=rows_total,
         rows_included=int(len(frame)),
         rows_excluded_total_rows=totals_excluded,
@@ -270,24 +307,30 @@ def _run_aggregate(
             return _finish(provenance, value=int(len(frame)), formatted_value=f"{len(frame):,}")
         raise ValueError("Aggregate queries need a value column")
 
-    series = frame[resolved.value_column.name]
+    value_key = frame_column_key(resolved.table, resolved.value_column)
+    series = frame[value_key]
 
     if resolved.group_by:
-        keys = {c.name: _group_key_series(frame, c) for c in resolved.group_by}
+        keys = {
+            frame_column_key(resolved.table, c): _group_key_series(
+                frame, resolved.table, c
+            )
+            for c in resolved.group_by
+        }
         grouped_frame = frame.assign(**keys)
-        grouped = grouped_frame.groupby(
-            [c.name for c in resolved.group_by], dropna=False
-        )
+        grouped = grouped_frame.groupby(list(keys), dropna=False)
         rows: list[GroupRow] = []
         blanks_total = 0
         for key, part in grouped:
             key_tuple = key if isinstance(key, tuple) else (key,)
-            value, blanks = _aggregate(part[resolved.value_column.name], function)
+            value, blanks = _aggregate(part[value_key], function)
             blanks_total += blanks
             rows.append(
                 GroupRow(
                     key={
-                        c.name: (None if pd.isna(k) else k)
+                        frame_column_key(resolved.table, c): (
+                            None if pd.isna(k) else k
+                        )
                         for c, k in zip(resolved.group_by, key_tuple, strict=True)
                     },
                     value=value,
@@ -349,12 +392,13 @@ def _run_compare_periods(
         raise ValueError("Period comparison parameters missing")
     function = resolved.function or AggregateFunction.SUM
 
-    dates = _as_datetime(frame[resolved.date_column.name])
+    dates = _as_datetime(frame[frame_column_key(resolved.table, resolved.date_column)])
+    value_key = frame_column_key(resolved.table, resolved.value_column)
     blanks_total = 0
     values: dict[int, Any] = {}
     for period in (comparison.period_a, comparison.period_b):
         subset = frame[dates.dt.year == period]
-        value, blanks = _aggregate(subset[resolved.value_column.name], function)
+        value, blanks = _aggregate(subset[value_key], function)
         blanks_total += blanks
         values[period] = value
 
@@ -392,7 +436,7 @@ def _run_deadlines(
         raise ValueError("Deadline queries need a date column")
     reference = pd.to_datetime(resolved.reference_date or date.today())
     provenance.assumptions.append(f"Reference date: {reference.date().isoformat()}.")
-    dates = _as_datetime(frame[resolved.date_column.name])
+    dates = _as_datetime(frame[frame_column_key(resolved.table, resolved.date_column)])
 
     if resolved.operation == QueryOperation.NEXT_DEADLINE:
         upcoming = frame[dates >= reference]

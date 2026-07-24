@@ -64,6 +64,12 @@ def _iso_date(raw: str):
     return date.fromisoformat(raw)
 
 
+def _iso_datetime(raw: str):
+    from datetime import datetime
+
+    return datetime.fromisoformat(raw)
+
+
 def _settings_for(args: argparse.Namespace) -> Settings:
     settings = get_settings()
     if getattr(args, "output_dir", None):
@@ -117,7 +123,11 @@ def _print_audit_summary(report: AuditReport, *, verbose: bool) -> None:
 
 def _cmd_audit(args: argparse.Namespace) -> int:
     settings = _settings_for(args)
-    report = audit_workbook(args.workbook, settings=settings)
+    report = audit_workbook(
+        args.workbook,
+        settings=settings,
+        generated_at=getattr(args, "generated_at", None),
+    )
     _print_audit_summary(report, verbose=args.verbose)
     _publish(
         report, render_audit_html(report), kind="audit", args=args, settings=settings
@@ -155,7 +165,12 @@ def _print_comparison_summary(report: WorkbookComparison, *, verbose: bool) -> N
 
 def _cmd_compare(args: argparse.Namespace) -> int:
     settings = _settings_for(args)
-    report = compare_workbooks(args.old, args.new, settings=settings)
+    report = compare_workbooks(
+        args.old,
+        args.new,
+        settings=settings,
+        generated_at=getattr(args, "generated_at", None),
+    )
     _print_comparison_summary(report, verbose=args.verbose)
     _publish(
         report,
@@ -452,12 +467,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     audit = sub.add_parser("audit", help="Risk-audit a single workbook")
     audit.add_argument("workbook", type=Path)
+    audit.add_argument(
+        "--generated-at", dest="generated_at", type=_iso_datetime,
+        help="Report timestamp override (ISO-8601) for reproducible output",
+    )
     _add_common_flags(audit)
     audit.set_defaults(func=_cmd_audit)
 
     compare = sub.add_parser("compare", help="Compare two workbook versions")
     compare.add_argument("old", type=Path)
     compare.add_argument("new", type=Path)
+    compare.add_argument(
+        "--generated-at", dest="generated_at", type=_iso_datetime,
+        help="Report timestamp override (ISO-8601) for reproducible output",
+    )
     _add_common_flags(compare)
     compare.set_defaults(func=_cmd_compare)
 

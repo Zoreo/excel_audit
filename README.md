@@ -210,11 +210,23 @@ the only place a language model may ever participate.
 - Zip-bomb defenses: decompressed-size cap, compression-ratio cap, entry-count
   cap, entry-path traversal checks, workbook-part verification.
 - Uploads are streamed to an isolated per-request directory with randomized
-  names and **deleted immediately after processing** (verified by test).
-  Client filenames are used for display only.
-- Reports are stored in a local SQLite database (`data/`); delete rows/file to
-  purge. No workbook content is sent to any external service, and cell
-  contents are not logged.
+  names and **deleted on every exit path, including errors** (verified by
+  test). The one exception: the web ask flow's confirmation step parks the
+  upload until the user confirms or the question fails, after which it is
+  deleted; abandoned confirmations are swept by a TTL cleanup
+  (`EXCEL_AUDITOR_WEB_UPLOAD_TTL_SECONDS`, default 1 hour) that runs at
+  startup and on each ask submission. Client filenames are used for display
+  only.
+- Job metadata lives in a local SQLite database (`data/`); report bodies are
+  stored **only** under `artifacts/reports/{report_id}.json|.html`. To purge a
+  report, delete those two files — it then disappears from both
+  `/api/v1/reports/{job_id}` and `/reports/{report_id}` (verified by test).
+  Databases created before schema version 2 may still carry legacy
+  `report_json`/`report_html` blob columns; they are tolerated and ignored —
+  to purge a legacy report, also clear its blobs
+  (`UPDATE jobs SET report_json = NULL, report_html = NULL WHERE id = ?;`
+  then `VACUUM;`). No workbook content is sent to any external service, and
+  cell contents are not logged.
 - All workbook-derived content is HTML-escaped in reports (verified by test).
 
 ## Known limitations

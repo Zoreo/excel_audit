@@ -95,6 +95,24 @@ def test_circular_reference_rule(tmp_path: Path):
     assert findings[0].evidence["cycle_size"] == 2
 
 
+def test_self_referencing_circular_rule(tmp_path: Path):
+    path = make_workbook(
+        tmp_path / "selfcycle.xlsx",
+        {
+            "Loop": {
+                "A1": "=A1+1",
+                **{f"D{r}": r for r in range(1, 11)},
+                "D11": "=SUM(D1:D11)",
+            }
+        },
+    )
+    findings = [f for f in _run(inventory_from_path(path)) if f.rule_id == "EA-CIR-001"]
+    assert len(findings) == 2
+    members = {tuple(f.evidence["members"]) for f in findings}
+    assert members == {("Loop!A1",), ("Loop!D11",)}
+    assert all(f.evidence["cycle_size"] == 1 for f in findings)
+
+
 def test_blank_reference_rule(tmp_path: Path):
     path = make_workbook(
         tmp_path / "blankref.xlsx",

@@ -74,6 +74,7 @@ class ComparisonSummary(BaseModel):
 class WorkbookComparison(BaseModel):
     """Full comparison report between an old and a new workbook version."""
 
+    report_schema_version: str = "2"
     engine_version: str
     generated_at: datetime
     old_workbook: WorkbookSummary
@@ -82,6 +83,7 @@ class WorkbookComparison(BaseModel):
     review_items: list[ReviewItem] = Field(default_factory=list)
     cell_changes: list[CellChange] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
+    failed_rules: list[str] = Field(default_factory=list)
     summary: ComparisonSummary = Field(default_factory=ComparisonSummary)
     risk_level: str = "minimal"
     risk_drivers: list[str] = Field(default_factory=list)

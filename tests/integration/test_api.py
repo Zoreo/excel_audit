@@ -99,3 +99,115 @@ def test_uploads_are_deleted_after_processing(client: TestClient, demo_paths, tm
         client.post("/api/v1/audits", files={"file": ("m.xlsx", fh, "application/octet-stream")})
     upload_dir = tmp_path / "data" / "uploads"
     assert not any(upload_dir.iterdir())
+
+
+def _create_audit_job(client: TestClient, demo_paths) -> dict:
+    _, v2 = demo_paths
+    with open(v2, "rb") as fh:
+        response = client.post(
+            "/api/v1/audits",
+            files={"file": ("model.xlsx", fh, "application/octet-stream")},
+        )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_job_report_served_byte_equal_from_store(
+    client: TestClient, demo_paths, tmp_path: Path
+):
+    job = _create_audit_job(client, demo_paths)
+    report_id = job["summary"]["report_id"]
+    reports_dir = tmp_path / "artifacts" / "reports"
+
+    via_job = client.get(f"/api/v1/reports/{job['id']}")
+    assert via_job.status_code == 200
+    assert via_job.content == (reports_dir / f"{report_id}.json").read_bytes()
+
+    via_job_html = client.get(f"/api/v1/reports/{job['id']}", params={"format": "html"})
+    assert via_job_html.status_code == 200
+    assert via_job_html.content == (reports_dir / f"{report_id}.html").read_bytes()
+
+
+def test_deleting_stored_files_purges_both_endpoint_families(
+    client: TestClient, demo_paths, tmp_path: Path
+):
+    job = _create_audit_job(client, demo_paths)
+    report_id = job["summary"]["report_id"]
+    reports_dir = tmp_path / "artifacts" / "reports"
+
+    # Both families serve the report while the files exist.
+    assert client.get(f"/api/v1/reports/{job['id']}").status_code == 200
+    assert client.get(f"/reports/{report_id}").status_code == 200
+
+    (reports_dir / f"{report_id}.json").unlink()
+    (reports_dir / f"{report_id}.html").unlink()
+
+    # The documented purge (delete the artifacts files) must be total.
+    assert client.get(f"/api/v1/reports/{job['id']}").status_code == 404
+    assert (
+        client.get(f"/api/v1/reports/{job['id']}", params={"format": "html"}).status_code
+        == 404
+    )
+    assert client.get(f"/reports/{report_id}").status_code == 404
+    assert client.get(f"/reports/{report_id}", params={"format": "json"}).status_code == 404
+
+
+_LEGACY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS jobs (
+    id           TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    error        TEXT,
+    created_at   TEXT NOT NULL,
+    source_names TEXT,
+    summary_json TEXT,
+    report_json  TEXT,
+    report_html  TEXT
+);
+"""
+
+
+def test_legacy_db_with_blob_columns_still_works(tmp_path: Path):
+    import sqlite3
+
+    from excel_auditor.storage.repositories import JobRepository
+
+    settings = Settings(data_dir=tmp_path / "data", artifacts_dir=tmp_path / "artifacts")
+    settings.ensure_dirs()
+    conn = sqlite3.connect(settings.db_path)
+    conn.executescript(_LEGACY_SCHEMA)
+    conn.execute(
+        "INSERT INTO jobs (id, kind, status, created_at, source_names, summary_json,"
+        " report_json, report_html)"
+        " VALUES (?, 'audit', 'completed', ?, ?, ?, ?, ?)",
+        (
+            "legacyjob",
+            "2026-01-01T00:00:00+00:00",
+            '["old.xlsx"]',
+            '{"risk_level": "high", "report_id": "deadbeef"}',
+            '{"legacy": true}',
+            "<p>legacy</p>",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    # The repository opens the legacy DB (CREATE TABLE IF NOT EXISTS is a
+    # no-op) and reads the row while ignoring the retired blob columns.
+    repo = JobRepository(settings.db_path)
+    record = repo.get("legacyjob")
+    assert record.status == "completed"
+    assert record.summary["report_id"] == "deadbeef"
+    assert not hasattr(record, "report_json")
+
+    # New rows insert fine into the legacy table shape.
+    new_id = repo.create_completed(
+        kind="audit", source_names=["new.xlsx"], summary={"report_id": "cafebabe"}
+    )
+    assert repo.get(new_id).kind == "audit"
+
+    # The whole app serves the legacy job; the report body 404s because the
+    # store files are absent and legacy blobs are ignored by design.
+    client = TestClient(create_app(settings))
+    assert client.get("/api/v1/jobs/legacyjob").status_code == 200
+    assert client.get("/api/v1/reports/legacyjob").status_code == 404

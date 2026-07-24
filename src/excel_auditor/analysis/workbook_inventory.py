@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
-from uuid import uuid4
 
 from openpyxl.worksheet.formula import ArrayFormula
 from openpyxl.worksheet.worksheet import Worksheet
@@ -209,6 +209,15 @@ def _external_links(wb, sheets: list[SheetInventory], zip_external_parts: int) -
     return combined
 
 
+def _file_sha256(path: Path) -> str:
+    """Full SHA-256 hex digest of the workbook file bytes (deterministic id)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def build_inventory(
     loaded: LoadedWorkbook,
     *,
@@ -239,7 +248,7 @@ def build_inventory(
     )
 
     return WorkbookInventory(
-        workbook_id=workbook_id or uuid4().hex[:12],
+        workbook_id=workbook_id or _file_sha256(loaded.path),
         filename=filename or loaded.path.name,
         file_size=loaded.file_size,
         sheets=sheets,

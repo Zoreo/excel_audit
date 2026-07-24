@@ -1,5 +1,10 @@
 from datetime import date
 
+import pytest
+
+from excel_auditor.analysis.query import ResolvedQuery, execute_query, load_table_frame
+from excel_auditor.analysis.schema import detect_workbook_schema
+from excel_auditor.analysis.workbook_inventory import inventory_from_path
 from excel_auditor.models.query import (
     AggregateFunction,
     FilterOperator,
@@ -195,3 +200,168 @@ def test_unknown_column_cannot_answer(sales_bg):
     )
     assert report.result.status == ResultStatus.CANNOT_ANSWER
     assert "schema" in (report.result.message or "")
+
+
+# --------------------------------------------------- duplicate headers (QA-001)
+
+
+def make_duplicate_amount_workbook(path):
+    """Category | Amount | Amount — the two Amount columns sum 60 and 6000."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    for col, name in enumerate(["Category", "Amount", "Amount"], start=1):
+        ws.cell(row=1, column=col, value=name).font = Font(bold=True)
+    rows = [("a", 10, 1000), ("b", 20, 2000), ("c", 30, 3000)]
+    for i, (category, first, second) in enumerate(rows, start=2):
+        ws.cell(row=i, column=1, value=category)
+        ws.cell(row=i, column=2, value=first)
+        ws.cell(row=i, column=3, value=second)
+    wb.save(path)
+    return path
+
+
+@pytest.fixture()
+def dup_amounts(tmp_path):
+    return make_duplicate_amount_workbook(tmp_path / "dup.xlsx")
+
+
+def test_frame_preserves_duplicate_columns(dup_amounts):
+    inventory = inventory_from_path(dup_amounts)
+    table = detect_workbook_schema(inventory).tables[0]
+    frame, _, _ = load_table_frame(inventory, table)
+    assert list(frame.columns) == ["Category", "Amount (B)", "Amount (C)"]
+    assert frame["Amount (B)"].sum() == 60
+    assert frame["Amount (C)"].sum() == 6000
+
+
+def test_duplicate_value_column_needs_confirmation_then_uses_choice(dup_amounts):
+    query = _query(
+        operation=QueryOperation.AGGREGATE,
+        function=AggregateFunction.SUM,
+        requested_metric="Amount",
+    )
+    first = answer_query(dup_amounts, query, exact_columns=True)
+    assert first.result.status == ResultStatus.NEEDS_CONFIRMATION
+    assert first.result.candidate_kind == "value_column"
+    names = [c.column_name for c in first.result.candidates]
+    assert names == ["Amount (column B)", "Amount (column C)"]
+
+    low = answer_query(dup_amounts, query, exact_columns=True, choices=[1])
+    assert low.result.value == 60
+    assert low.result.provenance.value_column == "Amount (B)"
+
+    high = answer_query(dup_amounts, query, exact_columns=True, choices=[2])
+    assert high.result.value == 6000
+    assert high.result.provenance.value_column == "Amount (C)"
+
+
+def test_duplicate_filter_column_hits_chosen_physical_column(dup_amounts):
+    query = _query(
+        operation=QueryOperation.LIST_ROWS,
+        filters=[
+            QueryFilter(
+                column="Amount", operator=FilterOperator.GREATER_THAN, value=500
+            )
+        ],
+    )
+    first = answer_query(dup_amounts, query, exact_columns=True)
+    assert first.result.status == ResultStatus.NEEDS_CONFIRMATION
+    assert first.result.candidate_kind == "filter_column"
+
+    low = answer_query(dup_amounts, query, exact_columns=True, choices=[1])
+    assert low.result.value == 0  # first Amount column: 10/20/30, none > 500
+
+    high = answer_query(dup_amounts, query, exact_columns=True, choices=[2])
+    assert high.result.value == 3  # second Amount column: 1000/2000/3000
+
+
+def test_duplicate_group_by_column_hits_chosen_physical_column(dup_amounts):
+    query = _query(
+        operation=QueryOperation.AGGREGATE,
+        function=AggregateFunction.SUM,
+        requested_metric="Amount",
+        group_by=["Amount"],
+    )
+    # choices: value column -> B (10/20/30), group column -> C (1000/2000/3000)
+    report = answer_query(dup_amounts, query, exact_columns=True, choices=[1, 2])
+    groups = {row.key["Amount (C)"]: row.value for row in report.result.groups}
+    assert groups == {1000: 10, 2000: 20, 3000: 30}
+
+
+def test_single_column_still_resolves_without_prompt(sales_bg_simple):
+    report = answer_query(
+        sales_bg_simple,
+        _query(function=AggregateFunction.SUM, requested_metric="Оборот"),
+        exact_columns=True,
+    )
+    assert report.result.status != ResultStatus.NEEDS_CONFIRMATION
+    assert report.result.provenance.value_column == "Оборот"
+
+
+# ------------------------------------------------ missing filter value (QA-003)
+
+
+@pytest.mark.parametrize(
+    "operator",
+    [
+        FilterOperator.GREATER_THAN,
+        FilterOperator.LESS_THAN,
+        FilterOperator.GREATER_OR_EQUAL,
+        FilterOperator.LESS_OR_EQUAL,
+        FilterOperator.EQUALS,
+        FilterOperator.NOT_EQUALS,
+        FilterOperator.CONTAINS,
+        FilterOperator.YEAR_EQUALS,
+        FilterOperator.BEFORE,
+        FilterOperator.AFTER,
+    ],
+)
+def test_filter_missing_value_raises_clean_error(sales_bg_simple, operator):
+    inventory = inventory_from_path(sales_bg_simple)
+    table = detect_workbook_schema(inventory).tables[0]
+    column = table.column("Оборот")
+    resolved = ResolvedQuery(
+        operation=QueryOperation.LIST_ROWS,
+        table=table,
+        filters=[(column, QueryFilter(column="Оборот", operator=operator, value=None))],
+    )
+    with pytest.raises(ValueError, match="missing a value"):
+        execute_query(inventory, resolved)
+
+
+def test_filter_missing_value_is_cannot_answer_via_service(sales_bg_simple):
+    report = answer_query(
+        sales_bg_simple,
+        _query(
+            operation=QueryOperation.AGGREGATE,
+            function=AggregateFunction.SUM,
+            requested_metric="Оборот",
+            filters=[
+                QueryFilter(
+                    column="Оборот", operator=FilterOperator.GREATER_THAN, value=None
+                )
+            ],
+        ),
+        exact_columns=True,
+    )
+    assert report.result.status == ResultStatus.CANNOT_ANSWER
+    assert "missing a value" in (report.result.message or "")
+
+
+def test_blank_filters_still_work_without_value(sales_bg_simple):
+    report = answer_query(
+        sales_bg_simple,
+        _query(
+            operation=QueryOperation.LIST_ROWS,
+            filters=[
+                QueryFilter(column="Оборот", operator=FilterOperator.IS_BLANK)
+            ],
+        ),
+        exact_columns=True,
+    )
+    assert report.result.status != ResultStatus.CANNOT_ANSWER
+    assert report.result.value == 2  # the two blank revenue rows

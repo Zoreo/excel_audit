@@ -55,8 +55,6 @@ def create_comparison(request: Request, old_file: UploadFile, new_file: UploadFi
             kind="comparison",
             source_names=[old_name, new_name],
             summary=summary,
-            report_json=report_json,
-            report_html=report_html,
         )
         record = repo.get(job_id)
         return JobResponse(

@@ -16,7 +16,8 @@ from . import __version__
 from .analysis.dependency_graph import DependencyGraph, impact_for
 from .analysis.pattern_detection import detect_pattern_anomalies
 from .analysis.review import build_review_items
-from .analysis.rules import AuditContext, run_all_rules
+from .analysis.rules import AuditContext
+from .analysis.rules.base import run_all_rules_with_failures
 from .analysis.severity import assess_risk, classify_cell_change
 from .analysis.workbook_diff import compare_inventories
 from .analysis.workbook_inventory import inventory_from_path
@@ -43,6 +44,20 @@ LIMITATIONS = [
     "Shared-formula expansion depends on how the source application saved the file.",
 ]
 
+def _failed_rule_notes(failed_rules: list[str]) -> tuple[str, str]:
+    """(limitations entry, risk_drivers entry) describing crashed rules."""
+    ids = ", ".join(failed_rules)
+    limitation = (
+        f"Rule(s) {ids} crashed and their checks were not applied; "
+        "analysis coverage is incomplete."
+    )
+    driver = (
+        f"{len(failed_rules)} analysis rule(s) failed to run; "
+        "results may be incomplete."
+    )
+    return limitation, driver
+
+
 # Change types that can propagate through the dependency graph.
 _IMPACTFUL_CHANGES = {
     ChangeType.FORMULA_CHANGED,
@@ -59,13 +74,14 @@ def audit_workbook(
     *,
     settings: Settings | None = None,
     filename: str | None = None,
+    generated_at: datetime | None = None,
 ) -> AuditReport:
     settings = settings or get_settings()
     inventory = inventory_from_path(Path(path), settings=settings, filename=filename)
     graph = DependencyGraph.build(inventory, max_range_cells=settings.max_range_cells)
     anomalies = detect_pattern_anomalies(inventory)
     ctx = AuditContext(inventory=inventory, graph=graph, pattern_anomalies=anomalies)
-    findings = run_all_rules(ctx)
+    findings, failed_rules = run_all_rules_with_failures(ctx)
 
     by_severity: dict[str, int] = {}
     for finding in findings:
@@ -74,15 +90,21 @@ def audit_workbook(
     risk_level, risk_drivers = assess_risk(
         (f.severity for f in findings), noun="finding"
     )
+    limitations = list(LIMITATIONS)
+    if failed_rules:
+        limitation, driver = _failed_rule_notes(failed_rules)
+        limitations.append(limitation)
+        risk_drivers.append(driver)
     return AuditReport(
         engine_version=__version__,
-        generated_at=datetime.now(UTC),
+        generated_at=generated_at or datetime.now(UTC),
         workbook=summarize_workbook(inventory),
         findings=findings,
         findings_by_severity=by_severity,
+        failed_rules=failed_rules,
         risk_level=risk_level,
         risk_drivers=risk_drivers,
-        limitations=LIMITATIONS,
+        limitations=limitations,
     )
 
 
@@ -93,6 +115,7 @@ def compare_workbooks(
     settings: Settings | None = None,
     old_filename: str | None = None,
     new_filename: str | None = None,
+    generated_at: datetime | None = None,
 ) -> WorkbookComparison:
     settings = settings or get_settings()
     old_inventory = inventory_from_path(
@@ -123,7 +146,7 @@ def compare_workbooks(
     # Standalone risk audit of the new version.
     anomalies = detect_pattern_anomalies(new_inventory)
     ctx = AuditContext(inventory=new_inventory, graph=graph, pattern_anomalies=anomalies)
-    findings = run_all_rules(ctx)
+    findings, failed_rules = run_all_rules_with_failures(ctx)
 
     # Unify changes and findings into review items. This also reconciles each
     # CellChange's severity/confidence with the findings at the same location.
@@ -155,16 +178,22 @@ def compare_workbooks(
     risk_level, risk_drivers = assess_risk(
         (item.severity for item in review_items), noun="review item"
     )
+    limitations = list(LIMITATIONS)
+    if failed_rules:
+        limitation, driver = _failed_rule_notes(failed_rules)
+        limitations.append(limitation)
+        risk_drivers.append(driver)
 
     return WorkbookComparison(
         engine_version=__version__,
-        generated_at=datetime.now(UTC),
+        generated_at=generated_at or datetime.now(UTC),
         old_workbook=summarize_workbook(old_inventory),
         new_workbook=summarize_workbook(new_inventory),
         structural_changes=structural,
         review_items=review_items,
         cell_changes=cell_changes,
         findings=findings,
+        failed_rules=failed_rules,
         summary=ComparisonSummary(
             total_cell_changes=len(cell_changes),
             total_review_items=len(review_items),
@@ -177,5 +206,5 @@ def compare_workbooks(
         ),
         risk_level=risk_level,
         risk_drivers=risk_drivers,
-        limitations=LIMITATIONS,
+        limitations=limitations,
     )
