@@ -229,9 +229,9 @@ def _structural_changes(
             )
         )
     for old_name, new_name, inferred in renamed:
-        details: dict[str, Any] = {"old_name": old_name, "new_name": new_name}
+        rename_details: dict[str, Any] = {"old_name": old_name, "new_name": new_name}
         if inferred:
-            details["inferred"] = True
+            rename_details["inferred"] = True
             basis = "inferred from content similarity"
         else:
             basis = "identical content"
@@ -241,7 +241,7 @@ def _structural_changes(
                 sheet_name=new_name,
                 description=f"Worksheet '{old_name}' appears to have been renamed "
                 f"to '{new_name}' ({basis}).",
-                details=details,
+                details=rename_details,
             )
         )
 
