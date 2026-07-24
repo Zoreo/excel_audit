@@ -15,6 +15,7 @@ with the user's choice(s) appended to `choices`.
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -77,11 +78,21 @@ class _NeedsConfirmation(Exception):
 
 
 def _candidates(matches: list[ColumnMatch]) -> list[ColumnCandidate]:
+    # Candidates that share a header within the same table are physically
+    # distinct columns; label them with the column letter so the user can
+    # tell them apart when confirming.
+    counts = Counter(
+        (m.table.sheet_name, m.table.ref, m.column.name) for m in matches
+    )
     return [
         ColumnCandidate(
             sheet_name=m.table.sheet_name,
             table_ref=m.table.ref,
-            column_name=m.column.name,
+            column_name=(
+                f"{m.column.name} (column {m.column.letter})"
+                if counts[(m.table.sheet_name, m.table.ref, m.column.name)] > 1
+                else m.column.name
+            ),
             column_type=m.column.type.value,
             reason=m.reason,
         )
@@ -350,8 +361,17 @@ def _answer(
 
 
 def _plural_message(target: str, matches: list[ColumnMatch]) -> str:
+    counts = Counter(
+        (m.table.sheet_name, m.table.ref, m.column.name) for m in matches
+    )
+
+    def _label(m: ColumnMatch) -> str:
+        if counts[(m.table.sheet_name, m.table.ref, m.column.name)] > 1:
+            return f"{m.column.name} (column {m.column.letter})"
+        return m.column.name
+
     options = "\n".join(
-        f"{i}. {m.table.sheet_name} → {m.column.name} ({m.column.type.value})"
+        f"{i}. {m.table.sheet_name} → {_label(m)} ({m.column.type.value})"
         for i, m in enumerate(matches, start=1)
     )
     return f"I found {len(matches)} possible matches for '{target}':\n{options}"

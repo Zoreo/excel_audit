@@ -195,10 +195,13 @@ _NUMERIC_TYPES = {ColumnType.NUMBER, ColumnType.CURRENCY, ColumnType.PERCENTAGE}
 
 
 def _dedupe(matches: list[ColumnMatch]) -> list[ColumnMatch]:
+    # Keyed on the PHYSICAL column (letter), not its header text: two distinct
+    # columns sharing a header must stay separate matches so ambiguity is
+    # surfaced instead of silently collapsing to one "resolved" column.
     seen: set[tuple[str, str, str]] = set()
     out: list[ColumnMatch] = []
     for m in matches:
-        key = (m.table.sheet_name, m.table.ref, m.column.name)
+        key = (m.table.sheet_name, m.table.ref, m.column.letter)
         if key not in seen:
             seen.add(key)
             out.append(m)
