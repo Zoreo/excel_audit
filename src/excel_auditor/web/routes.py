@@ -3,20 +3,24 @@
 Demonstration-only. Forms call the same application services as the CLI and
 API - no business logic lives here. For the ask flow, the uploaded file is
 parked under artifacts/uploads with a random token so the confirmation step
-can re-run the query without re-uploading; the file is deleted as soon as the
-question is answered.
+can re-run the query without re-uploading; the file is deleted on every exit
+path except the needs-confirmation round trip, and a TTL sweep (run at app
+startup and on each /ask submission) removes abandoned parked uploads.
 """
 
 from __future__ import annotations
 
+import logging
 import secrets
 import shutil
+import time
 
 from fastapi import APIRouter, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, PackageLoader, select_autoescape
 
 from ..api.uploads import sanitize_display_name, save_upload
+from ..config import Settings
 from ..llm import UnsupportedQuestionError, get_parser
 from ..models.query import ResultStatus
 from ..query_service import answer_query, inspect_schema
@@ -27,6 +31,8 @@ from ..reporting.html_report import (
 )
 from ..reporting.json_report import to_json
 from ..services import audit_workbook, compare_workbooks
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(include_in_schema=False)
 
@@ -120,6 +126,28 @@ def _parked_path(request: Request, token: str):
     return files[0] if files else None
 
 
+def sweep_web_uploads(settings: Settings, *, now: float | None = None) -> None:
+    """Delete parked /ask uploads older than the configured TTL.
+
+    Covers abandoned confirmation flows and crash leftovers. Runs at app
+    startup and opportunistically on each /ask submission (no background
+    thread). Directories younger than the TTL are never touched, so an
+    in-flight confirmation keeps its parked file.
+    """
+    upload_dir = settings.web_upload_dir
+    if not upload_dir.is_dir():
+        return
+    cutoff = (now if now is not None else time.time()) - settings.web_upload_ttl_seconds
+    for entry in upload_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        try:
+            if entry.stat().st_mtime < cutoff:
+                shutil.rmtree(entry, ignore_errors=True)
+        except OSError:  # pragma: no cover - raced with another deletion
+            logger.warning("Could not sweep parked upload %s", entry, exc_info=True)
+
+
 @router.post("/ask")
 def ask_submit(
     request: Request,
@@ -129,6 +157,7 @@ def ask_submit(
     choices: str | None = Form(default=None),
 ) -> HTMLResponse:
     settings = request.app.state.settings
+    sweep_web_uploads(settings)
 
     # First submission uploads the file; confirmation re-uses the parked copy.
     if token:
@@ -140,50 +169,63 @@ def ask_submit(
             return _page("ask.html.j2", error="Choose a workbook file first.")
         token = secrets.token_hex(8)
         directory = settings.web_upload_dir / token
-        path = save_upload(file, directory, settings)
+        try:
+            path = save_upload(file, directory, settings)
+        except BaseException:
+            # save_upload may fail after partially creating the directory
+            # (bad extension, size cap, empty file) - never leave it behind.
+            shutil.rmtree(directory, ignore_errors=True)
+            raise
 
-    display_name = sanitize_display_name(getattr(file, "filename", None) or path.name)
-    choice_list = [int(c) for c in (choices or "").split(",") if c.strip().isdigit()]
-
-    schema_report = inspect_schema(path, settings=settings, filename=display_name)
-    parser = get_parser()
+    # The parked copy is deleted on every exit path - including exceptions -
+    # except the needs-confirmation return, which must keep it for the
+    # follow-up POST (a plain try/finally would break that flow).
+    keep_parked = False
     try:
-        query = parser.parse(question, schema_report.workbook_schema)
-    except UnsupportedQuestionError as exc:
-        shutil.rmtree(path.parent, ignore_errors=True)
-        return _page("ask.html.j2", error=str(exc), question=question)
+        display_name = sanitize_display_name(getattr(file, "filename", None) or path.name)
+        choice_list = [int(c) for c in (choices or "").split(",") if c.strip().isdigit()]
 
-    report = answer_query(
-        path,
-        query,
-        question=question,
-        exact_columns=False,
-        choices=choice_list,
-        settings=settings,
-        filename=display_name,
-    )
-    result = report.result
-    if result.status == ResultStatus.NEEDS_CONFIRMATION:
+        schema_report = inspect_schema(path, settings=settings, filename=display_name)
+        parser = get_parser()
+        try:
+            query = parser.parse(question, schema_report.workbook_schema)
+        except UnsupportedQuestionError as exc:
+            return _page("ask.html.j2", error=str(exc), question=question)
+
+        report = answer_query(
+            path,
+            query,
+            question=question,
+            exact_columns=False,
+            choices=choice_list,
+            settings=settings,
+            filename=display_name,
+        )
+        result = report.result
+        if result.status == ResultStatus.NEEDS_CONFIRMATION:
+            keep_parked = True
+            return _page(
+                "ask.html.j2",
+                question=question,
+                token=token,
+                choices=",".join(str(c) for c in choice_list),
+                confirmation=result,
+            )
+
+        if result.status == ResultStatus.CANNOT_ANSWER:
+            return _page("ask.html.j2", error=result.message, question=question)
+
+        ref = request.app.state.report_store.save(
+            kind="query",
+            report_json=to_json(report),
+            report_html=render_query_html(report),
+        )
         return _page(
             "ask.html.j2",
             question=question,
-            token=token,
-            choices=",".join(str(c) for c in choice_list),
-            confirmation=result,
+            answered=result,
+            report_url=f"/reports/{ref.report_id}",
         )
-
-    shutil.rmtree(path.parent, ignore_errors=True)
-    if result.status == ResultStatus.CANNOT_ANSWER:
-        return _page("ask.html.j2", error=result.message, question=question)
-
-    ref = request.app.state.report_store.save(
-        kind="query",
-        report_json=to_json(report),
-        report_html=render_query_html(report),
-    )
-    return _page(
-        "ask.html.j2",
-        question=question,
-        answered=result,
-        report_url=f"/reports/{ref.report_id}",
-    )
+    finally:
+        if not keep_parked:
+            shutil.rmtree(path.parent, ignore_errors=True)

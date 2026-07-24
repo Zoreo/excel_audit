@@ -39,10 +39,16 @@ def get_report(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if record.status != "completed":
         raise HTTPException(status_code=409, detail=f"Job status is '{record.status}'.")
+    # Report bodies live only in the report store; deleting the stored files
+    # purges the report from this endpoint and /reports/{report_id} alike.
+    report_id = (record.summary or {}).get("report_id") or ""
+    store = request.app.state.report_store
     if format == "html":
-        if not record.report_html:
+        html = store.load_html(report_id)
+        if html is None:
             raise HTTPException(status_code=404, detail="No HTML report stored.")
-        return HTMLResponse(content=record.report_html)
-    if not record.report_json:
+        return HTMLResponse(content=html)
+    payload = store.load_json(report_id)
+    if payload is None:
         raise HTTPException(status_code=404, detail="No JSON report stored.")
-    return Response(content=record.report_json, media_type="application/json")
+    return Response(content=payload, media_type="application/json")
