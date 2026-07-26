@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from .dependency import DependencyImpact
 from .enums import ChangeType, Confidence, Severity, StructuralChangeType
 from .findings import Finding
-from .reports import WorkbookSummary
+from .reports import REPORT_SCHEMA_VERSION, WorkbookSummary
 
 
 class CellChange(BaseModel):
@@ -74,7 +74,7 @@ class ComparisonSummary(BaseModel):
 class WorkbookComparison(BaseModel):
     """Full comparison report between an old and a new workbook version."""
 
-    report_schema_version: str = "2"
+    report_schema_version: str = REPORT_SCHEMA_VERSION
     engine_version: str
     generated_at: datetime
     old_workbook: WorkbookSummary

@@ -23,9 +23,9 @@ def test_audit_json_round_trip(demo_paths):
 
 def test_report_schema_version_present_in_json(demo_paths):
     audit_payload = json.loads(to_json(audit_workbook(demo_paths[1])))
-    assert audit_payload["report_schema_version"] == "2"
+    assert audit_payload["report_schema_version"] == "3"
     comparison_payload = json.loads(to_json(compare_workbooks(*demo_paths)))
-    assert comparison_payload["report_schema_version"] == "2"
+    assert comparison_payload["report_schema_version"] == "3"
 
 
 def test_comparison_json_includes_impact(demo_paths):

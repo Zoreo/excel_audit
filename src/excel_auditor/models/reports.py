@@ -14,6 +14,12 @@ from .enums import SheetVisibility
 from .findings import Finding
 from .workbook import NamedRange, SheetInventory, WorkbookInventory
 
+#: Version of the JSON report schema shared by AuditReport and
+#: WorkbookComparison. v3: row-insertion inference (ROWS_INSERTED /
+#: ROWS_REMOVED structural changes with per-cell suppression on inserted
+#: and removed rows) plus milestone-3 additive fields.
+REPORT_SCHEMA_VERSION = "3"
+
 
 class SheetSummary(BaseModel):
     name: str
@@ -78,7 +84,7 @@ def summarize_workbook(inventory: WorkbookInventory) -> WorkbookSummary:
 class AuditReport(BaseModel):
     """Standalone risk audit of a single workbook."""
 
-    report_schema_version: str = "2"
+    report_schema_version: str = REPORT_SCHEMA_VERSION
     engine_version: str
     generated_at: datetime
     workbook: WorkbookSummary

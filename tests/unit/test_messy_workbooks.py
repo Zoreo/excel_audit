@@ -169,13 +169,37 @@ def _model_with_rows(path: Path, months: int, *, total_label_row_offset: int = 1
 
 
 def test_inserted_row(tmp_path: Path):
-    """Row inserted mid-table: engine completes, and the grown v2 stays
-    pattern-clean (no false positives from the shift)."""
+    """Row inserted mid-table collapses (D7/D8): one ROWS_INSERTED structural
+    change plus the grown total range - no add/change flood from the shift -
+    and the grown v2 stays pattern-clean (no false positives)."""
     v1 = _model_with_rows(tmp_path / "v1.xlsx", months=10)
     v2 = _model_with_rows(tmp_path / "v2.xlsx", months=11)
 
     report = compare_workbooks(v1, v2)
-    assert report.summary.total_cell_changes > 0
+
+    inserted = [
+        c for c in report.structural_changes if c.change_type.value == "rows_inserted"
+    ]
+    assert len(inserted) == 1
+    assert inserted[0].sheet_name == "Data"
+    assert inserted[0].details["start_row"] == 12  # the new month row
+    assert inserted[0].details["count"] == 1
+    assert inserted[0].details["sample_cells"]
+
+    # The only cell change is the total range growing at its shifted position.
+    assert [(c.sheet_name, c.coordinate, c.change_type.value) for c in report.cell_changes] == [
+        ("Data", "D13", "formula_changed")
+    ]
+    assert report.summary.total_cell_changes == 1
+    assert report.summary.changes_by_type == {"formula_changed": 1}
+    # Review items reflect the collapse: no value/formula-added flood.
+    assert not [
+        i
+        for i in report.review_items
+        if i.change is not None
+        and i.change.change_type.value in {"value_added", "formula_added"}
+    ]
+    assert report.summary.structural_change_count == 1
 
     audit = audit_workbook(v2)
     assert _pattern_findings(audit) == []
