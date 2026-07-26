@@ -50,8 +50,21 @@ def test_demo_diff_detects_planted_changes(old_inventory, new_inventory):
     assert len(added) == 1
     assert added[0].details["visibility"] == "hidden"
 
-    # 9: volatile formula appears as an added formula
-    assert changes[("Summary", "B8")].change_type == ChangeType.FORMULA_ADDED
+    # 9 (and 5): the volatile formula and the external reference live on two
+    # appended Summary rows; since schema v3 (D7/D8) those rows collapse into
+    # one ROWS_INSERTED structural change instead of per-cell additions.
+    assert ("Summary", "B8") not in changes
+    assert ("Summary", "B7") not in changes
+    inserted = [
+        c
+        for c in structural
+        if c.change_type == StructuralChangeType.ROWS_INSERTED and c.sheet_name == "Summary"
+    ]
+    assert len(inserted) == 1
+    assert inserted[0].details["start_row"] == 7
+    assert inserted[0].details["count"] == 2
+    sampled = {s["coordinate"]: s for s in inserted[0].details["sample_cells"]}
+    assert sampled["B8"]["formula"] == "=TODAY()"
 
 
 def test_unchanged_cells_not_reported(old_inventory, new_inventory):
