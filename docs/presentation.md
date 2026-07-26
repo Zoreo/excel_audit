@@ -261,6 +261,154 @@ For the businesses in the room:
 Contact: **[TO FILL: name, phone, email]**
 
 ---
+
+## 15. FAQ — the questions that will come up (and our answers)
+
+> Use this as Q&A prep and/or a leave-behind page. Answers are written to be
+> spoken aloud: short, plain, honest. Don't over-answer — stop when the
+> question is answered.
+
+### How it answers
+
+**Q: How does it know which column I'm asking about?**
+Three steps. First it reads the workbook's structure — which tables exist,
+which columns hold dates, money, text. Then it matches your words against a
+bilingual vocabulary: "оборот", "turnover", "revenue", even "oborot" in Latin
+letters all map to the same concept. And the crucial part: if more than one
+column plausibly matches — say the sheet has both *Оборот* and *Нетен
+оборот* — **it stops and asks you which one**, instead of guessing. Silent
+guessing is exactly the failure we built this against.
+
+**Q: What if there are two columns with the same name?**
+It notices, tells you "Amount (column B)" vs "Amount (column C)", and asks.
+In our demo workbook those two columns sum to 1,900 vs 19,000 — a tool that
+guessed would be 10× wrong while looking confident.
+
+**Q: What happens when it can't answer?**
+It says so — the answer status is literally "cannot answer safely", with the
+reason. It refuses open-ended questions ("is this business healthy?"),
+questions about data it can't find, and questions where a filter can't be
+built precisely. A refusal is a feature: it's what makes the answers it
+*does* give worth trusting.
+
+**Q: Does it understand Bulgarian?**
+Yes — Cyrillic sheet names, Bulgarian column headers, transliterated Latin
+headers, and questions asked in Bulgarian. That's native behavior, tested,
+not a translation layer.
+
+### Trust & accuracy
+
+**Q: How confident are you that this doesn't produce nonsense answers?**
+Because it doesn't *generate* answers — it *computes* them. There's no AI in
+the calculation path: your question becomes a structured query, and the
+number comes from deterministic arithmetic over the actual cells. Every
+answer ships with its recipe — which sheet, which column, which rows were
+included, which were excluded and why. You can check any answer by hand in a
+minute. And when it isn't sure, it asks or refuses; it never bluffs.
+
+**Q: So it's never wrong?**
+It can be — in two honest ways. The *audit* findings are risk flags, not
+verdicts: a flagged cell can turn out intentional, which is why every finding
+carries a separate confidence level and a suggested action, and a human
+reviewer stays in charge. And the *answers* are computed from the values
+Excel last saved — if the workbook itself was saved mid-edit with stale
+values, the tool reports what's in the file. What it will not do is invent
+data or silently pick between ambiguous options.
+
+**Q: Is this ChatGPT under the hood?**
+No. Today there is **no AI model in the product at all** — the language
+understanding is rule-based, and everything after it is ordinary computation.
+If we later add an LLM to understand more phrasings, the architecture only
+lets it translate wording into a structured query — it can never touch the
+math, choose columns, or see results before they're computed.
+
+**Q: Two people ask the same question — do they get the same answer?**
+Yes, byte-for-byte. Same file + same question ⇒ identical output, today or in
+six months. Reports carry a cryptographic fingerprint of the exact file they
+describe, so there's never a "which version was this run on?" argument.
+
+**Q: Why should we trust a product this young?**
+Don't trust it — test it. That's the pilot: your real workbook, our tool, in
+front of you, and you judge every finding. The engineering behind that offer:
+233 automated tests, a third-party-style audit of the codebase with every
+confirmed finding fixed (paper trail included), and reports designed as
+evidence — deterministic, fingerprinted, with limitations printed on every
+page.
+
+### Security & data
+
+**Q: Where does our data go?**
+Nowhere. Processing is local — the workbook is analyzed on the machine the
+tool runs on, no cloud service, no external AI, no telemetry. Nothing about
+your files is used to "train" anything. It even runs with the network cable
+unplugged.
+
+**Q: Where will the service live?**
+Today: on your hardware — a laptop or an office server, installed via Docker
+or plain Python; for pilots we can bring it and run it in your office. A
+hosted version (so your team just opens a browser) is on the roadmap and will
+live on EU infrastructure with proper accounts and access control — we won't
+host client financials before that layer exists.
+
+**Q: How is it secure?**
+Files are validated before parsing (malformed/oversized/zip-bomb files are
+rejected), macros are never executed, uploads are deleted immediately after
+processing, and deleting a stored report actually removes it everywhere —
+that's verified by automated tests, not by promise. Today's report links are
+local URLs meant for one machine; multi-user access control comes with the
+hosted version, and we'll say that plainly rather than pretend.
+
+**Q: What about GDPR?**
+The strongest answer available: your data never leaves your control, because
+processing is local and there are no third-party processors involved. You
+remain the data controller with nothing new to disclose. When the hosted
+version arrives, it ships with the formal paperwork (DPA, retention policy);
+until then there's simply no data transfer to regulate.
+
+### Practical
+
+**Q: Does it change our files?**
+Never. It's strictly read-only — it produces reports *about* the workbook and
+never writes into it. It also never "auto-fixes" anything: it flags, you
+decide.
+
+**Q: What files does it support?**
+Modern Excel: `.xlsx` and `.xlsm` (macros flagged, not executed). Not yet:
+old `.xls`, password-protected files, Google Sheets. Size limits are
+configurable; typical financial models are well within them.
+
+**Q: Our spreadsheets are… not tidy. Will it cope?**
+That's the test we want. It's built for real-world mess — Cyrillic names,
+merged headers, spacer rows, multiple tables per sheet, subtotal rows (which
+it excludes from sums so nothing is double-counted). When a sheet is too
+unstructured to read reliably, it says so instead of producing a shaky
+answer — and the `schema` report shows you exactly what it did and didn't
+recognize.
+
+**Q: What do we need to install? What does our IT need to approve?**
+One machine with Docker (or Python 3.12) — no internet access required, no
+accounts, no data leaves the building. IT reviews a local, open-inspectable
+install rather than a cloud vendor.
+
+**Q: Does it integrate with what we use?**
+Today: a command-line tool, shareable HTML/JSON reports, and a REST API your
+systems can call. On the roadmap: drop-a-file-in-Teams/Slack delivery and
+scheduled re-audits. The JSON reports are versioned so integrations don't
+break silently.
+
+### Commercial
+
+**Q: What does it cost?**
+Honest answer: pricing is decided after pilots. The pilot itself is free or
+symbolic in exchange for measurable before/after data and a case study. You
+get value either way; we get the numbers for slide 9.
+
+**Q: Who else is using it?**
+You'd be among the first — that's leverage, not a weakness: pilot clients get
+direct influence over what the reports look like and founder-level support.
+**[TO FILL: replace this answer the moment the first pilot converts.]**
+
+---
 ---
 
 # Appendix A — What is actually happening under the hood
@@ -399,6 +547,7 @@ team, ask. Mapping to ours:
 | Business model | 13 | TBD until pilot feedback |
 | Team | — | add when pitching investors; customers care less |
 | Ask | 14 | customer version = pilot, not money |
+| Q&A prep / objection handling | 15 | doubles as a leave-behind FAQ page |
 
 This is a **customer pitch** (goal: pilots), not an investor pitch. For an
 investor version later, add: team slide, market sizing with real sources,
