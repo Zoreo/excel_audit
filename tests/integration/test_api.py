@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from excel_auditor.api.app import create_app
 from excel_auditor.config import Settings
+from excel_auditor.storage.reports import ReportStore
 
 
 @pytest.fixture()
@@ -14,6 +16,13 @@ def client(tmp_path: Path) -> TestClient:
         data_dir=tmp_path / "data", artifacts_dir=tmp_path / "artifacts"
     )
     return TestClient(create_app(settings))
+
+
+def _store_for(tmp_path: Path) -> ReportStore:
+    """A ReportStore over the same artifacts dir the `client` app serves."""
+    return ReportStore(
+        Settings(data_dir=tmp_path / "data", artifacts_dir=tmp_path / "artifacts")
+    )
 
 
 def test_health(client: TestClient):
@@ -150,6 +159,63 @@ def test_deleting_stored_files_purges_both_endpoint_families(
     )
     assert client.get(f"/reports/{report_id}").status_code == 404
     assert client.get(f"/reports/{report_id}", params={"format": "json"}).status_code == 404
+
+
+# ---------------------------------------------------------------- PDF (T13)
+
+
+def test_stored_pdf_served_via_public_route(client: TestClient, tmp_path: Path):
+    ref = _store_for(tmp_path).save(
+        kind="audit",
+        report_json="{}",
+        report_html="<p>x</p>",
+        report_pdf=b"%PDF-1.7 stored bytes",
+    )
+    response = client.get(f"/reports/{ref.report_id}", params={"format": "pdf"})
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content == b"%PDF-1.7 stored bytes"  # byte-equal to the store
+
+
+def test_pdf_rendered_on_demand_when_not_stored(client: TestClient, tmp_path: Path):
+    pytest.importorskip("weasyprint")
+    store = _store_for(tmp_path)
+    ref = store.save(kind="audit", report_json="{}", report_html="<h1>Report</h1>")
+    response = client.get(f"/reports/{ref.report_id}", params={"format": "pdf"})
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content.startswith(b"%PDF-")
+    # GET is side-effect free: the on-demand render is not persisted.
+    assert store.load_pdf(ref.report_id) is None
+
+
+def test_pdf_format_404_for_unknown_or_invalid_report(client: TestClient):
+    assert client.get("/reports/deadbeef", params={"format": "pdf"}).status_code == 404
+    assert client.get("/reports/..%2fsecret", params={"format": "pdf"}).status_code == 404
+
+
+def test_pdf_format_422_without_weasyprint(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # weasyprint may be installed here; force the lazy import to fail.
+    monkeypatch.setitem(sys.modules, "weasyprint", None)
+    ref = _store_for(tmp_path).save(kind="audit", report_json="{}", report_html="<p>x</p>")
+
+    response = client.get(f"/reports/{ref.report_id}", params={"format": "pdf"})
+    assert response.status_code == 422
+    assert "pip install 'excel-auditor[pdf]'" in response.json()["detail"]
+
+    # HTML/JSON flows are completely unaffected by the missing extra.
+    assert client.get(f"/reports/{ref.report_id}").status_code == 200
+    assert (
+        client.get(f"/reports/{ref.report_id}", params={"format": "json"}).status_code
+        == 200
+    )
+
+
+def test_unknown_format_param_is_422(client: TestClient, tmp_path: Path):
+    ref = _store_for(tmp_path).save(kind="audit", report_json="{}", report_html="x")
+    assert client.get(f"/reports/{ref.report_id}", params={"format": "docx"}).status_code == 422
 
 
 _LEGACY_SCHEMA = """
