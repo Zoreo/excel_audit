@@ -54,9 +54,20 @@ class NamedRange(BaseModel):
 
 
 class TableInfo(BaseModel):
+    """An Excel `Table` object (ListObject) as recorded in the file.
+
+    `header_row_count` / `totals_row_count` come from the Table XML and are
+    exact — unlike the block heuristics, they are Excel's own declaration of
+    which rows of `ref` are header/totals. `None` in the file is coerced to 0
+    at inventory time; the defaults mirror Excel's (one header row, no totals
+    row).
+    """
+
     name: str
     ref: str
     sheet_name: str
+    header_row_count: int = 1
+    totals_row_count: int = 0
 
 
 class SheetInventory(BaseModel):

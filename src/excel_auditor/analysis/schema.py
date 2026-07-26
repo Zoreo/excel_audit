@@ -131,6 +131,111 @@ def _likely_identifier(name: str, records: list[CellRecord], column_type: Column
     )
 
 
+def _build_columns(
+    rows: dict[int, dict[int, CellRecord]],
+    col_indices: list[int],
+    header_rows: list[int],
+    body_rows: list[int],
+) -> list[ColumnSchema]:
+    """Column schemas for the given columns: names from the header rows,
+    types/samples inferred from the body rows."""
+    columns: list[ColumnSchema] = []
+    for col_idx in col_indices:
+        header_parts = [
+            str(rows[hr][col_idx].value)
+            for hr in header_rows
+            if hr in rows and col_idx in rows[hr] and rows[hr][col_idx].value is not None
+        ]
+        name = (
+            " / ".join(header_parts)
+            if header_parts
+            else f"Column {get_column_letter(col_idx)}"
+        )
+        body_records = [rows[r][col_idx] for r in body_rows if col_idx in rows[r]]
+        column_type, number_format, currency = _infer_column_type(body_records)
+        values = [r.value for r in body_records if r.value is not None]
+        samples: list[str] = []
+        for value in values:
+            text = str(value)[:40]
+            if text not in samples:
+                samples.append(text)
+            if len(samples) >= _SAMPLE_LIMIT:
+                break
+        columns.append(
+            ColumnSchema(
+                letter=get_column_letter(col_idx),
+                index=col_idx,
+                name=name,
+                normalized_name=normalize(name),
+                type=column_type,
+                number_format=number_format or None,
+                currency=currency,
+                likely_identifier=_likely_identifier(name, body_records, column_type),
+                missing_count=len(body_rows) - len(values),
+                distinct_count=len({str(v) for v in values}),
+                sample_values=samples,
+            )
+        )
+    return columns
+
+
+def _exact_table_schema(
+    sheet: SheetInventory,
+    rows: dict[int, dict[int, CellRecord]],
+    block: list[int],
+    block_cols: list[int],
+) -> TableSchema | None:
+    """Decision D14: an Excel Table object covering the block overrides the
+    header/totals heuristics — its headerRowCount/totalsRowCount are exact
+    metadata from the file. Returns None when no Table covers the block (the
+    caller falls back to the heuristics)."""
+    from openpyxl.utils.cell import range_boundaries
+
+    for info in sheet.tables:
+        try:
+            c1, r1, c2, r2 = range_boundaries(info.ref)
+        except ValueError:
+            continue
+        if c1 is None or r1 is None or c2 is None or r2 is None:
+            continue
+        if not (r1 <= block[0] and block[-1] <= r2):
+            continue  # the Table does not cover the block's rows
+        if c2 < block_cols[0] or c1 > block_cols[-1]:
+            continue  # no column overlap
+        header_count = max(info.header_row_count, 0)
+        totals_count = max(info.totals_row_count, 0)
+        header_rows = list(range(r1, r1 + header_count))
+        data_start = r1 + header_count
+        body_end = r2 - totals_count
+        if body_end < data_start:
+            continue  # header/totals only: nothing queryable
+        total_rows = list(range(body_end + 1, r2 + 1))
+        notes = [
+            f"Excel Table '{info.name}': header/totals split is exact "
+            "(from Excel Table metadata)."
+        ]
+        if total_rows:
+            notes.append(
+                "Row(s) "
+                + ", ".join(str(r) for r in total_rows)
+                + " are the Table's totals row(s) and are excluded from queries."
+            )
+        body_rows = [r for r in block if data_start <= r <= body_end]
+        columns = _build_columns(rows, list(range(c1, c2 + 1)), header_rows, body_rows)
+        return TableSchema(
+            sheet_name=sheet.name,
+            ref=str(info.ref),
+            header_rows=header_rows,
+            data_start_row=data_start,
+            data_end_row=r2,
+            row_count=body_end - data_start + 1,
+            columns=columns,
+            total_rows=total_rows,
+            notes=notes,
+        )
+    return None
+
+
 def _detect_block_tables(sheet: SheetInventory) -> list[TableSchema]:
     """Split the sheet into contiguous row blocks; each block that looks
     tabular (header row + >=2 data rows) becomes a TableSchema."""
@@ -150,13 +255,21 @@ def _detect_block_tables(sheet: SheetInventory) -> list[TableSchema]:
 
     tables: list[TableSchema] = []
     for block in blocks:
+        block_cols = sorted({c for r in block for c in rows[r]})
+
+        # D14: an Excel Table object covering the block gives the exact
+        # header/totals split; the heuristics below apply only without one.
+        exact = _exact_table_schema(sheet, rows, block, block_cols)
+        if exact is not None:
+            tables.append(exact)
+            continue
+
         if len(block) < _MIN_TABLE_ROWS + 1:  # header + at least 2 data rows
             continue
         notes: list[str] = []
 
         # Header detection: first row in the block that is text-dominant and
         # spans at least half of the block's width.
-        block_cols = sorted({c for r in block for c in rows[r]})
         width = len(block_cols)
         header_rows: list[int] = []
         for pos, row_idx in enumerate(block[:3]):  # look at the first 3 rows only
@@ -199,43 +312,7 @@ def _detect_block_tables(sheet: SheetInventory) -> list[TableSchema]:
                 + " look like totals and are excluded from queries."
             )
 
-        columns: list[ColumnSchema] = []
-        for col_idx in block_cols:
-            header_parts = [
-                str(rows[hr][col_idx].value)
-                for hr in header_rows
-                if col_idx in rows[hr] and rows[hr][col_idx].value is not None
-            ]
-            name = (
-                " / ".join(header_parts)
-                if header_parts
-                else f"Column {get_column_letter(col_idx)}"
-            )
-            body_records = [rows[r][col_idx] for r in body_rows if col_idx in rows[r]]
-            column_type, number_format, currency = _infer_column_type(body_records)
-            values = [r.value for r in body_records if r.value is not None]
-            samples: list[str] = []
-            for value in values:
-                text = str(value)[:40]
-                if text not in samples:
-                    samples.append(text)
-                if len(samples) >= _SAMPLE_LIMIT:
-                    break
-            columns.append(
-                ColumnSchema(
-                    letter=get_column_letter(col_idx),
-                    index=col_idx,
-                    name=name,
-                    normalized_name=normalize(name),
-                    type=column_type,
-                    number_format=number_format or None,
-                    currency=currency,
-                    likely_identifier=_likely_identifier(name, body_records, column_type),
-                    missing_count=len(body_rows) - len(values),
-                    distinct_count=len({str(v) for v in values}),
-                    sample_values=samples,
-                )
-            )
+        columns = _build_columns(rows, block_cols, header_rows, body_rows)
 
         first_col = get_column_letter(block_cols[0])
         last_col = get_column_letter(block_cols[-1])

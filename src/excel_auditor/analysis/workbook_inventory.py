@@ -115,9 +115,27 @@ def _build_sheet(
 
     tables: list[TableInfo] = []
     try:
-        for name, table in (ws_formulas.tables or {}).items():
+        # NB: openpyxl's TableList.items() yields (name, ref-string); plain
+        # dict access is needed to reach the Table object and its metadata.
+        table_map = ws_formulas.tables or {}
+        for name in table_map:
+            table = dict.get(table_map, name)
+            if table is None:
+                continue
             ref = table.ref if hasattr(table, "ref") else str(table)
-            tables.append(TableInfo(name=str(name), ref=str(ref), sheet_name=ws_formulas.title))
+            # Exact structure from the Table XML; None → 0 per decision D14
+            # (openpyxl defaults: headerRowCount=1, totalsRowCount=None).
+            header_count = getattr(table, "headerRowCount", 1)
+            totals_count = getattr(table, "totalsRowCount", None)
+            tables.append(
+                TableInfo(
+                    name=str(name),
+                    ref=str(ref),
+                    sheet_name=ws_formulas.title,
+                    header_row_count=int(header_count) if header_count is not None else 0,
+                    totals_row_count=int(totals_count) if totals_count is not None else 0,
+                )
+            )
     except (AttributeError, TypeError):
         pass
 

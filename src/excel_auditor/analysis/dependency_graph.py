@@ -323,9 +323,12 @@ def _resolve_table_reference(
 ) -> list[ParsedReference] | None:
     """`Table1[Col]` / `Table1[]` -> the data-row sub-range; None when unsure.
 
-    The inventory records only the table's full ref, so we assume Excel's
-    default single header row and detect a totals row by its self-referential
-    aggregate formula (e.g. =SUBTOTAL(109,Table1[Col])) in the ref's last row.
+    Header and totals rows are excluded using the exact
+    `header_row_count`/`totals_row_count` captured from the Table XML
+    (decision D14). When the XML declares no totals row, script-authored
+    files (openpyxl leaves totalsRowCount unset) may still park one inside
+    the ref, so the self-referential aggregate detection (e.g.
+    =SUBTOTAL(109,Table1[Col]) in the ref's last row) is kept as a fallback.
     Item specifiers (#All/#Headers/..., @, multi-column spans, escaped column
     names) are not resolved and keep the unknown marker.
     """
@@ -343,10 +346,14 @@ def _resolve_table_reference(
     c2 = ref.end.column if ref.end else c1
     if r1 is None or c1 is None or r2 is None or c2 is None:
         return None
-    data_r1 = r1 + 1  # header row excluded (Excel's default headerRowCount=1)
-    data_r2 = r2
-    table_upper = table.name.upper()
-    if data_r2 >= data_r1:
+    header_count = max(table.header_row_count, 0)
+    totals_count = max(table.totals_row_count, 0)
+    data_r1 = r1 + header_count  # header row(s) excluded (exact, from Table XML)
+    data_r2 = r2 - totals_count  # totals row(s) excluded (exact, from Table XML)
+    if totals_count == 0 and data_r2 >= data_r1:
+        # No totals row declared; fall back to detecting an undeclared one by
+        # its self-referential aggregate formula in the ref's last row.
+        table_upper = table.name.upper()
         for c in range(c1, c2 + 1):
             record = sheet.cells.get(f"{get_column_letter(c)}{data_r2}")
             if (
@@ -369,11 +376,14 @@ def _resolve_table_reference(
                 end=CellRef(row=data_r2, column=c2),
             )
         ]
+    if header_count < 1:
+        return None  # no in-sheet header row: column names cannot be matched
+    header_row = r1 + header_count - 1
     wanted = spec.casefold()
     matches = [
         c
         for c in range(c1, c2 + 1)
-        if (header := sheet.cells.get(f"{get_column_letter(c)}{r1}")) is not None
+        if (header := sheet.cells.get(f"{get_column_letter(c)}{header_row}")) is not None
         and isinstance(header.value, str)
         and header.value.strip().casefold() == wanted
     ]
