@@ -1,7 +1,9 @@
 # Engineering Handoff — excel-auditor POC
 
-Status: **working, reviewable**. 141 tests passing, ruff clean, mypy clean
+Status: **working, reviewable**. 233 tests passing, ruff clean, mypy clean
 (69 source files), application exercised live (CLI + server) before handoff.
+Includes the 2026-07 remediation of all verified audit findings (report
+schema v2 — see `docs/audits/` for the paper trail).
 
 ## 1. What was implemented
 
@@ -81,7 +83,7 @@ excel-auditor/
 │   ├── web/                 # server-rendered demo pages
 │   └── storage/             # sqlite job store + file report store
 ├── scripts/generate_demo_workbooks.py
-└── tests/                   # 141 tests: unit/ + integration/ + conftest fixtures
+└── tests/                   # 233 tests: unit/ + integration/ + conftest fixtures
 ```
 
 ## 3. Install / run / test
@@ -99,7 +101,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Python >= 3.12
 .venv/bin/excel-auditor ask <sales.xlsx> "Какъв е общият оборот за 2025?"
 .venv/bin/excel-auditor serve                 # http://localhost:8000
 
-.venv/bin/python -m pytest                    # 141 tests
+.venv/bin/python -m pytest                    # 233 tests
 .venv/bin/ruff check src tests
 .venv/bin/mypy src/excel_auditor
 ```
