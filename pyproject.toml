@@ -20,6 +20,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+pdf = [
+    "weasyprint>=61",
+]
+mcp = [
+    "mcp>=1.0",
+]
 dev = [
     "pytest>=8",
     "httpx>=0.27",
