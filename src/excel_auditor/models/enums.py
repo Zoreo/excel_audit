@@ -76,3 +76,5 @@ class StructuralChangeType(StrEnum):
     HIDDEN_ROWS_CHANGED = "hidden_rows_changed"
     HIDDEN_COLUMNS_CHANGED = "hidden_columns_changed"
     MACROS_CHANGED = "macros_changed"
+    ROWS_INSERTED = "rows_inserted"
+    ROWS_REMOVED = "rows_removed"
