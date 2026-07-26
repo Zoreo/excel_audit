@@ -48,6 +48,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(queries.router)
     app.include_router(web_routes.router)
 
+    if settings.teams_enabled:
+        # Imported lazily and mounted only behind the flag (decision D13):
+        # with EXCEL_AUDITOR_TEAMS_ENABLED unset the app is byte-for-byte
+        # unaffected by the Teams integration.
+        from ..integrations.teams import router as teams_router
+
+        app.include_router(teams_router)
+
     @app.exception_handler(WorkbookValidationError)
     def _validation_error(request: Request, exc: WorkbookValidationError) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
