@@ -19,3 +19,7 @@ class WorkbookLoadError(ExcelAuditorError):
 
 class JobNotFoundError(ExcelAuditorError):
     """No job exists with the requested id."""
+
+
+class PdfExportUnavailableError(ExcelAuditorError):
+    """PDF export was requested but the optional [pdf] extra is not installed."""

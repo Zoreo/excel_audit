@@ -50,6 +50,7 @@ from .reporting.html_report import (
     write_html,
 )
 from .reporting.json_report import to_json, write_json
+from .reporting.pdf_report import render_pdf, write_pdf
 from .services import audit_workbook, compare_workbooks
 from .storage.reports import ReportRef, ReportStore
 
@@ -85,17 +86,32 @@ def _publish(
     args: argparse.Namespace,
     settings: Settings,
 ) -> ReportRef:
+    # Render the PDF (if requested) before anything is written so a missing
+    # [pdf] extra fails cleanly without leaving a half-published report.
+    pdf_to_store = bool(getattr(args, "pdf_store", False))
+    pdf_output = getattr(args, "pdf_output", None)
+    pdf_bytes: bytes | None = render_pdf(html) if (pdf_to_store or pdf_output) else None
     store = ReportStore(settings)
-    ref = store.save(kind=kind, report_json=to_json(report), report_html=html)
+    ref = store.save(
+        kind=kind,
+        report_json=to_json(report),
+        report_html=html,
+        report_pdf=pdf_bytes if pdf_to_store else None,
+    )
     if getattr(args, "json_output", None):
         write_json(report, args.json_output)
         print(f"JSON copy written to {args.json_output}")
     if getattr(args, "html_output", None):
         write_html(html, args.html_output)
         print(f"HTML copy written to {args.html_output}")
+    if pdf_output and pdf_bytes is not None:
+        write_pdf(pdf_bytes, pdf_output)
+        print(f"PDF copy written to {pdf_output}")
     print("Report:")
     print(f"  {ref.url}")
     print(f"  {ref.html_path}")
+    if ref.pdf_path is not None:
+        print(f"  {ref.pdf_path}")
     if getattr(args, "open_report", False):
         webbrowser.open(ref.html_path.as_uri())
     return ref
@@ -446,6 +462,14 @@ def _add_common_flags(parser: argparse.ArgumentParser) -> None:
         help="Also write the HTML report to this exact path",
     )
     parser.add_argument(
+        "--pdf-output", dest="pdf_output", type=Path,
+        help="Also write a PDF copy to this exact path (requires the [pdf] extra)",
+    )
+    parser.add_argument(
+        "--pdf", dest="pdf_store", action="store_true",
+        help="Also store a PDF copy in the report store (requires the [pdf] extra)",
+    )
+    parser.add_argument(
         "--open", dest="open_report", action="store_true",
         help="Open the HTML report in the default browser",
     )
@@ -454,7 +478,7 @@ def _add_common_flags(parser: argparse.ArgumentParser) -> None:
         help="Do not open the report (default)",
     )
     parser.add_argument("--verbose", "-v", action="store_true")
-    parser.set_defaults(open_report=False, verbose=False)
+    parser.set_defaults(open_report=False, verbose=False, pdf_store=False)
 
 
 def build_parser() -> argparse.ArgumentParser:
