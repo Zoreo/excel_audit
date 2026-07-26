@@ -13,8 +13,11 @@ execution model worked; reuse it.
   tests` clean, `mypy src/excel_auditor` clean (69 files),
   `report_schema_version = "2"`.
 - **Remote:** GitHub `https://github.com/Zoreo/excel_audit.git` (remote name
-  is `main`). Do not push worker branches unless asked; the integration
-  branch is pushed by the lead at the end.
+  is `main`). Do not push worker branches; the lead pushes.
+- **Merge policy (approved):** when ALL §6 gates pass, the lead merges
+  `milestone-3/integration` into `main` and pushes — no human review gate.
+  If any gate fails, do NOT merge; push the integration branch only and
+  report what failed. A red pipeline is the only thing that blocks main.
 - **Branches:** integration `milestone-3/integration`; workers
   `feat/row-insertion` (W-A), `feat/table-metadata` (W-B), `feat/pdf-export`
   (W-C), `feat/integrations` (W-D).
@@ -248,7 +251,24 @@ Deconfliction notes:
 | Offline | `pytest` passes with network disabled |
 | Docs | README/HANDOFF/presentation consistent with shipped behavior; no stale counts (this went stale last time — check explicitly) |
 
-Deliver at the end: an updated `docs/audits/`-style progress file
-(`docs/plans/milestone-3-progress.md`) recording state, commits per task,
-gate results, and anything deferred — written so the next session can resume
-cold.
+## 7. Wrap-up (mandatory final step)
+
+After the gates pass and the merge to `main` is pushed:
+
+1. Write `docs/plans/milestone-3-progress.md` (same style as the remediation
+   progress file): final state, commits per task, gate results table, test
+   count before/after, anything deferred — written so a cold session can
+   resume from it. Commit and push it.
+2. Regenerate and commit nothing that is gitignored, but leave fresh
+   `demo_workbooks/` artifacts on disk (schema v3, pinned `--generated-at`).
+3. End the session with a **wrap-up report in chat** containing:
+   - what was built, per task, in one line each;
+   - the gate results (tests before → after, ruff, mypy, determinism);
+   - **how to demo each new capability — exact commands** (row-collapse
+     compare, PDF export, Teams card post with a real webhook URL env var,
+     `status <id>` webhook call example, MCP server launch line);
+   - what was deferred or is known-imperfect, honestly;
+   - the pushed commit hash on `main`.
+
+If a gate failed and the merge was blocked, the wrap-up report states which
+gate, why, and what the smallest next action is.
