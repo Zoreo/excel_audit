@@ -23,6 +23,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(_ENV_PREFIX + name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path = field(
@@ -46,6 +53,20 @@ class Settings:
     )
     log_level: str = field(
         default_factory=lambda: os.environ.get(_ENV_PREFIX + "LOG_LEVEL", "INFO")
+    )
+    # --- Microsoft Teams integration (see integrations/teams.py) -----------
+    # Off by default: with the flag off the API app is byte-for-byte
+    # unaffected (the router is never imported or mounted).
+    teams_enabled: bool = field(default_factory=lambda: _env_bool("TEAMS_ENABLED", False))
+    # Secret shown by Teams when creating an outgoing webhook (base64 string).
+    teams_hmac_secret: str = field(
+        default_factory=lambda: os.environ.get(_ENV_PREFIX + "TEAMS_HMAC_SECRET", "")
+    )
+    # Incoming-webhook URL of the target channel (used to post report cards).
+    teams_incoming_webhook_url: str = field(
+        default_factory=lambda: os.environ.get(
+            _ENV_PREFIX + "TEAMS_INCOMING_WEBHOOK_URL", ""
+        )
     )
 
     @property

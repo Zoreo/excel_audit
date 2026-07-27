@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Narrated tour of excel-auditor's trust guarantees (report schema v2).
+"""Narrated tour of excel-auditor's trust guarantees (report schema v3).
 
 Builds small workbooks that reproduce classic silent-spreadsheet-error
 situations, then shows how the engine handles each one: confirm instead of
@@ -197,8 +197,64 @@ def tour_deterministic_reports(workdir: Path) -> None:
     print("      zero noise. The id proves WHICH file the report describes.")
 
 
+def _months_model(path: Path, months: int) -> Path:
+    """A monthly table: label, amount, running formula — plus a grand total."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Budget"
+    ws["A1"], ws["B1"], ws["C1"] = "Month", "Amount", "Running"
+    for i in range(1, months + 1):
+        row = i + 1
+        ws[f"A{row}"] = f"2026-{i:02d}"
+        ws[f"B{row}"] = 100 * i
+        ws[f"C{row}"] = f"=SUM(B$2:B{row})"
+    ws[f"A{months + 2}"] = "Total"
+    ws[f"B{months + 2}"] = f"=SUM(B2:B{months + 1})"
+    wb.save(path)
+    return path
+
+
+def tour_row_insertion_collapse(workdir: Path) -> None:
+    _banner("6. A row inserted mid-table is ONE change, not a wall of noise")
+    v10 = _months_model(workdir / "budget_10m.xlsx", 10)
+    # 11-month version = same model with one month inserted mid-table.
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Budget"
+    ws["A1"], ws["B1"], ws["C1"] = "Month", "Amount", "Running"
+    months = [f"2026-{i:02d}" for i in range(1, 11)]
+    months.insert(5, "2026-05b")              # the inserted row
+    for idx, label in enumerate(months, start=2):
+        base = (idx - 1) if idx <= 6 else (idx - 2 if label != "2026-05b" else 55)
+        ws[f"A{idx}"] = label
+        ws[f"B{idx}"] = 100 * base if label != "2026-05b" else 550
+        ws[f"C{idx}"] = f"=SUM(B$2:B{idx})"
+    ws["A13"] = "Total"
+    ws["B13"] = "=SUM(B2:B12)"                # total range grew: real change
+    v11 = workdir / "budget_11m.xlsx"
+    wb.save(v11)
+
+    report = compare_workbooks(v10, v11, generated_at=STAMP)
+    inserted = [c for c in report.structural_changes
+                if c.change_type.value == "rows_inserted"]
+    cell_adds = [c for c in report.cell_changes
+                 if c.change_type.value in ("value_added", "formula_added")]
+    formula_edits = [c for c in report.cell_changes
+                     if c.change_type.value == "formula_changed"]
+    for change in inserted:
+        print(f"Structural: {change.description}")
+        print(f"   details: start_row={change.details.get('start_row')}, "
+              f"count={change.details.get('count')}")
+    print(f"Cell-level added-value noise from the shifted rows: {len(cell_adds)}")
+    for change in formula_edits:
+        print(f"Real change kept: {change.sheet_name}!{change.coordinate} "
+              f"{change.old_formula} -> {change.new_formula}")
+    print("   -> before schema v3 this diff was dozens of value/formula 'adds';")
+    print("      now it is one rows_inserted plus the genuinely grown total.")
+
+
 def main() -> None:
-    print("excel-auditor — trust-guarantee tour (report schema v2)")
+    print("excel-auditor — trust-guarantee tour (report schema v3)")
     with tempfile.TemporaryDirectory(prefix="excel-auditor-tour-") as tmp:
         workdir = Path(tmp)
         tour_confirm_instead_of_guess(workdir)
@@ -206,6 +262,7 @@ def main() -> None:
         tour_audit_catches_the_classics(workdir)
         tour_named_input_impact(workdir)
         tour_deterministic_reports(workdir)
+        tour_row_insertion_collapse(workdir)
     print()
     print("Done. Full reports: excel-auditor audit/compare/ask <file> "
           "(HTML + JSON with provenance).")

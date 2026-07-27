@@ -92,7 +92,7 @@ A **working product** (POC stage, local-first), not a slide-deck idea:
   ambiguous.
 
 Interfaces: terminal CLI, HTML/JSON reports at shareable local URLs, REST
-API, minimal web demo pages. 233 automated tests. Runs entirely on our
+API, minimal web demo pages. 296 automated tests. Runs entirely on our
 machine — **client files never leave it**.
 
 ---
@@ -229,11 +229,16 @@ What we will measure with each pilot client and put here:
 ## 12. Roadmap (near → far)
 
 1. **Now:** pilot with 3–5 firms; measure the numbers for slide 9.
-2. **Next:** reports in Bulgarian, PDF export, one-click "row insertion"
-   collapsing, hosted version with accounts for multi-client firms.
-3. **Later:** Microsoft Teams/Slack delivery ("drop a workbook in the
-   channel, get the report"), scheduled re-audits, per-client column
-   mappings that remember each client's terminology.
+   Shipped since this deck was drafted: PDF export, row-insertion
+   collapsing (one structural change instead of dozens of shifted-cell
+   changes), exact Excel Table metadata, an MCP server, and Teams
+   webhook cards (summary posts + `status <id>` queries).
+2. **Next:** reports in Bulgarian, hosted version with accounts for
+   multi-client firms.
+3. **Later:** full Microsoft Teams/Slack delivery ("drop a workbook in the
+   channel, get the report" — needs a registered Azure bot; webhooks can't
+   receive files), scheduled re-audits, per-client column mappings that
+   remember each client's terminology.
 
 ---
 
@@ -330,7 +335,7 @@ describe, so there's never a "which version was this run on?" argument.
 **Q: Why should we trust a product this young?**
 Don't trust it — test it. That's the pilot: your real workbook, our tool, in
 front of you, and you judge every finding. The engineering behind that offer:
-233 automated tests, a third-party-style audit of the codebase with every
+296 automated tests, a third-party-style audit of the codebase with every
 confirmed finding fixed (paper trail included), and reports designed as
 evidence — deterministic, fingerprinted, with limitations printed on every
 page.
@@ -391,10 +396,15 @@ accounts, no data leaves the building. IT reviews a local, open-inspectable
 install rather than a cloud vendor.
 
 **Q: Does it integrate with what we use?**
-Today: a command-line tool, shareable HTML/JSON reports, and a REST API your
-systems can call. On the roadmap: drop-a-file-in-Teams/Slack delivery and
-scheduled re-audits. The JSON reports are versioned so integrations don't
-break silently.
+Today: a command-line tool, shareable HTML/JSON reports (plus PDF for
+filing/emailing), a REST API your systems can call, an MCP server so
+AI assistants and MCP-capable tools can run audits and ask questions
+directly, and Microsoft Teams webhooks — audit summaries posted as cards
+into a channel, and a `status <report id>` command answered from the
+channel. Honest caveat: Teams webhooks cannot receive file attachments, so
+"drop a workbook in the channel, get the report" needs a registered Azure
+bot — that and Slack delivery are roadmap, not shipped. The JSON reports
+are versioned so integrations don't break silently.
 
 ### Commercial
 

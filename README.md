@@ -237,7 +237,7 @@ production needs authentication (documented limitation).
 ### Tests & checks
 
 ```bash
-.venv/bin/python -m pytest      # 233 tests
+.venv/bin/python -m pytest      # 296 tests
 .venv/bin/ruff check src tests
 .venv/bin/mypy src/excel_auditor
 ```
@@ -340,8 +340,10 @@ the only place a language model may ever participate.
 - Formulas are analyzed structurally; the workbook is not recalculated. Query
   results use the values Excel last saved (openpyxl-generated files cache none
   for formula cells).
-- Row/column insertions are not inferred — they appear as many shifted-formula
-  changes (normalized-equal shifts are downgraded to `info`).
+- Column insertions are not inferred — they appear as many shifted-formula
+  changes (normalized-equal shifts are downgraded to `info`). Row
+  insertions/removals *are* inferred and collapse into single structural
+  changes (schema v3).
 - `.xls`, Google Sheets, VBA analysis, and password-protected files are out of scope.
 - External-reference detection is formula-text based; link *targets* are read
   from workbook metadata when available.
@@ -391,8 +393,37 @@ What changed, in user terms:
 See `HANDOFF.md` for the full engineering handoff (decisions, assumptions,
 shortcuts, uncertain areas).
 
+## What's new — report schema v3 (2026-07, milestone 3)
+
+- **Row-insertion inference.** Inserted/removed rows are detected per sheet
+  (deterministic `difflib` alignment over row signatures) and collapse into
+  single `rows_inserted`/`rows_removed` structural changes instead of dozens
+  of shifted value/formula changes. Genuinely edited cells on aligned rows
+  still report normally at their new coordinates. Column insertions remain a
+  known limitation. JSON carries `report_schema_version: "3"`.
+- **Exact Excel Table metadata.** When a workbook contains real Excel Tables,
+  their declared header/totals row counts override the heuristics (the schema
+  note says "exact (from Excel Table metadata)"), totals rows are excluded
+  from row counts, query sums, and structured-reference dependency ranges.
+- **PDF export** via the optional `excel-auditor[pdf]` extra (WeasyPrint;
+  macOS: `brew install pango`). `--pdf-output PATH` / `--pdf` on the CLI,
+  `GET /reports/{id}?format=pdf` on the API. PDFs are excluded from the
+  byte-determinism guarantee (embedded creation metadata); JSON/HTML remain
+  the canonical evidence artifacts.
+- **Integrations scaffolding.** An MCP server (`python -m
+  excel_auditor.integrations.mcp_server`, stdio; optional `[mcp]` extra)
+  exposes `audit_workbook` / `compare_workbooks` / `inspect_schema` /
+  `ask_question` to any MCP-capable client. Microsoft Teams webhooks, both
+  directions: an incoming-webhook card poster (`--notify-teams` on
+  `audit`/`compare`) and an HMAC-validated `POST /integrations/teams`
+  endpoint (`status <report_id>` / `help`), mounted only when
+  `EXCEL_AUDITOR_TEAMS_ENABLED=1`. Caveat: Teams outgoing
+  webhooks cannot receive file attachments — Q&A over uploaded workbooks in
+  Teams requires a real Azure bot and is a later milestone.
+
 ## Roadmap candidates (next three)
 
-1. Row/column insertion inference so shifted blocks collapse into one change.
-2. PDF export of the HTML report + Bulgarian localization of report strings.
+1. ~~Row insertion inference~~ (shipped, v3) → column-insertion inference.
+2. ~~PDF export of the HTML report~~ (shipped, v3) → Bulgarian localization
+   of report strings.
 3. Async processing with background workers + audit history per client.

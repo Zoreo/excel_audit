@@ -74,3 +74,44 @@ def test_cli_verbose_lists_everything(demo_paths, tmp_path: Path, capsys):
     assert code == 0
     out = capsys.readouterr().out
     assert "… and" not in out  # nothing truncated in verbose mode
+
+
+def test_cli_audit_notify_teams(demo_paths, tmp_path: Path, capsys, monkeypatch):
+    _, v2 = demo_paths
+    recorded = []
+    monkeypatch.setenv(
+        "EXCEL_AUDITOR_TEAMS_INCOMING_WEBHOOK_URL",
+        "https://example.webhook.office.com/webhookb2/fake",
+    )
+    monkeypatch.setattr(
+        "excel_auditor.integrations.teams._urllib_transport",
+        lambda url, body, headers: (recorded.append(url), 200)[1],
+    )
+    code = main(
+        [
+            "audit", str(v2),
+            "--output-dir", str(tmp_path / "artifacts"),
+            "--notify-teams",
+        ]
+    )
+    assert code == 0
+    assert recorded == ["https://example.webhook.office.com/webhookb2/fake"]
+    assert "Teams notification posted (HTTP 200)." in capsys.readouterr().out
+
+
+def test_cli_notify_teams_without_webhook_url_fails_cleanly(
+    demo_paths, tmp_path: Path, capsys, monkeypatch
+):
+    _, v2 = demo_paths
+    monkeypatch.delenv("EXCEL_AUDITOR_TEAMS_INCOMING_WEBHOOK_URL", raising=False)
+    code = main(
+        [
+            "audit", str(v2),
+            "--output-dir", str(tmp_path / "artifacts"),
+            "--notify-teams",
+        ]
+    )
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "Teams notification failed" in err
+    assert "EXCEL_AUDITOR_TEAMS_INCOMING_WEBHOOK_URL" in err

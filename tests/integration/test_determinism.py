@@ -110,12 +110,30 @@ def test_audit_byte_identical_across_hash_seeds(tmp_path: Path):
         assert run_html == baseline_html
 
 
+def _row_table(units: list[int]) -> dict[str, Any]:
+    """A sheet above the D7 row-alignment gate (>= 5 data rows + total)."""
+    cells: dict[str, Any] = {}
+    for offset, value in enumerate(units):
+        row = offset + 2
+        cells[f"A{row}"] = value
+        cells[f"B{row}"] = f"=A{row}*2"
+    total_row = len(units) + 2
+    cells[f"A{total_row}"] = "Total"
+    cells[f"B{total_row}"] = f"=SUM(B2:B{total_row - 1})"
+    return cells
+
+
 def test_compare_byte_identical_across_hash_seeds(tmp_path: Path):
     # Several matched sheets with visibility/merged/hidden changes so that
-    # structural-change ordering is actually exercised.
-    old = _make_workbook(tmp_path / "old.xlsx", _base_sheets())
+    # structural-change ordering is actually exercised, plus a row-aligned
+    # sheet with an inserted row so the schema-v3 ROWS_INSERTED path (D7/D8
+    # signature alignment) is covered by the byte comparison too.
+    old_sheets = _base_sheets()
+    old_sheets["Rows"] = _row_table([10, 20, 30, 40, 50, 60])
+    old = _make_workbook(tmp_path / "old.xlsx", old_sheets)
     new_sheets = _base_sheets()
     new_sheets["S1"]["B1"] = "=A1*99"
+    new_sheets["Rows"] = _row_table([10, 20, 30, 99, 40, 50, 60])  # row inserted
     new = _make_workbook(
         tmp_path / "new.xlsx",
         new_sheets,

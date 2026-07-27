@@ -5,11 +5,16 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+from collections import Counter
 from collections.abc import Callable
+from difflib import SequenceMatcher
 from typing import Any
+
+from openpyxl.utils import get_column_letter
 
 from ..models import (
     CellChange,
+    CellRecord,
     ChangeType,
     SheetInventory,
     StructuralChange,
@@ -442,6 +447,303 @@ def _classify_cell(
     return None
 
 
+# ------------------------------------------------------------ row alignment
+#
+# Approved decision D7: rows of a matched sheet pair are aligned with per-row
+# signatures + difflib.SequenceMatcher (stdlib, deterministic). Alignment is
+# applied only when the sheet has >= 5 data rows on both sides AND the
+# matcher's ratio is >= 0.60; otherwise the positional diff runs unchanged.
+# Approved decision D8: cells on inserted/removed rows are carried by
+# ROWS_INSERTED / ROWS_REMOVED structural changes (one per contiguous run)
+# instead of flooding the report with per-cell adds/removes.
+
+_MIN_DATA_ROWS = 5
+_MIN_ROW_ALIGNMENT_RATIO = 0.60
+_MAX_SAMPLE_CELLS = 5
+# Pairing an empty row with a populated one is allowed but weak, so cells
+# typed into a previously blank row keep reading as per-cell additions.
+_EMPTY_PAIR_SCORE = 0.05
+# Rows sharing no content may still pair positionally (a fully retyped row),
+# but only when no better alignment exists at all.
+_FLOOR_PAIR_SCORE = 0.01
+# Replace regions larger than this (old rows x new rows) skip the similarity
+# DP and pair positionally; the remainder becomes inserted/removed runs.
+_MAX_REPLACE_DP_PAIRS = 10_000
+
+_RowSignature = tuple[Any, ...]
+_EMPTY_ROW: _RowSignature = ()
+
+
+def _cell_signature(record: CellRecord) -> tuple[str, Any]:
+    """Alignment identity of one cell: normalized formula or a typed value."""
+    if record.is_formula:
+        return ("f", record.normalized_formula or record.formula)
+    value = record.value
+    if isinstance(value, bool):
+        return ("b", value)
+    if isinstance(value, (int, float)):
+        return ("n", float(value))
+    if isinstance(value, str):
+        return ("s", value)
+    return ("o", repr(value))
+
+
+def _row_map(sheet: SheetInventory) -> dict[int, dict[int, CellRecord]]:
+    rows: dict[int, dict[int, CellRecord]] = {}
+    for record in sheet.cells.values():
+        rows.setdefault(record.row, {})[record.column] = record
+    return rows
+
+
+def _signature_sequence(
+    rows: dict[int, dict[int, CellRecord]], used_columns: list[int]
+) -> list[_RowSignature]:
+    """Signatures for rows 1..last populated row (index i = row i + 1)."""
+    sequence: list[_RowSignature] = []
+    for row in range(1, max(rows) + 1):
+        cells = rows.get(row)
+        if not cells:
+            sequence.append(_EMPTY_ROW)
+        else:
+            sequence.append(
+                tuple(
+                    _cell_signature(cells[column]) if column in cells else None
+                    for column in used_columns
+                )
+            )
+    return sequence
+
+
+def _row_similarity(a: _RowSignature, b: _RowSignature) -> float:
+    """Share of populated columns two row signatures agree on (see floors)."""
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return _EMPTY_PAIR_SCORE
+    populated = 0
+    matches = 0
+    for entry_a, entry_b in zip(a, b, strict=True):
+        if entry_a is None and entry_b is None:
+            continue
+        populated += 1
+        if entry_a == entry_b:
+            matches += 1
+    if populated == 0:  # pragma: no cover - non-empty signatures always overlap
+        return 1.0
+    return max(matches / populated, _FLOOR_PAIR_SCORE)
+
+
+def _align_replace_region(
+    old_rows: list[int],
+    new_rows: list[int],
+    old_signatures: list[_RowSignature],
+    new_signatures: list[_RowSignature],
+) -> tuple[list[tuple[int, int]], list[int], list[int]]:
+    """Align one `replace` opcode region by content similarity.
+
+    Returns (paired (old_row, new_row) list, removed old rows, inserted new
+    rows). A monotonic best-similarity alignment (edit-distance style DP)
+    decides which surplus rows are the inserted/removed ones, so an appended
+    month pairs the moved total row with its new position instead of pairing
+    the total with the new data row. Ties prefer pairing, then removal.
+    """
+    count_old, count_new = len(old_rows), len(new_rows)
+    if count_old * count_new > _MAX_REPLACE_DP_PAIRS:
+        shared = min(count_old, count_new)
+        return (
+            list(zip(old_rows[:shared], new_rows[:shared], strict=False)),
+            old_rows[shared:],
+            new_rows[shared:],
+        )
+    score = [
+        [_row_similarity(old_signatures[i], new_signatures[j]) for j in range(count_new)]
+        for i in range(count_old)
+    ]
+    best = [[0.0] * (count_new + 1) for _ in range(count_old + 1)]
+    for i in range(1, count_old + 1):
+        for j in range(1, count_new + 1):
+            best[i][j] = max(
+                best[i - 1][j - 1] + score[i - 1][j - 1],
+                best[i - 1][j],
+                best[i][j - 1],
+            )
+    paired: list[tuple[int, int]] = []
+    removed: list[int] = []
+    inserted: list[int] = []
+    i, j = count_old, count_new
+    while i > 0 or j > 0:
+        if (
+            i > 0
+            and j > 0
+            and best[i][j] == best[i - 1][j - 1] + score[i - 1][j - 1]
+        ):
+            paired.append((old_rows[i - 1], new_rows[j - 1]))
+            i -= 1
+            j -= 1
+        elif i > 0 and best[i][j] == best[i - 1][j]:
+            removed.append(old_rows[i - 1])
+            i -= 1
+        else:
+            inserted.append(new_rows[j - 1])
+            j -= 1
+    paired.reverse()
+    removed.reverse()
+    inserted.reverse()
+    return paired, removed, inserted
+
+
+def _align_rows(
+    old_rows: dict[int, dict[int, CellRecord]],
+    new_rows: dict[int, dict[int, CellRecord]],
+) -> tuple[list[tuple[int, int]], list[int], list[int]] | None:
+    """Row alignment for one matched sheet pair, or None when the D7 gate
+    fails (fewer than 5 data rows on either side, or ratio < 0.60)."""
+    if len(old_rows) < _MIN_DATA_ROWS or len(new_rows) < _MIN_DATA_ROWS:
+        return None
+    used_columns = sorted(
+        {column for cells in old_rows.values() for column in cells}
+        | {column for cells in new_rows.values() for column in cells}
+    )
+    old_sequence = _signature_sequence(old_rows, used_columns)
+    new_sequence = _signature_sequence(new_rows, used_columns)
+    matcher = SequenceMatcher(a=old_sequence, b=new_sequence, autojunk=False)
+    if matcher.ratio() < _MIN_ROW_ALIGNMENT_RATIO:
+        return None
+    paired: list[tuple[int, int]] = []
+    removed: list[int] = []
+    inserted: list[int] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            paired.extend((i1 + k + 1, j1 + k + 1) for k in range(i2 - i1))
+        elif tag == "delete":
+            removed.extend(range(i1 + 1, i2 + 1))
+        elif tag == "insert":
+            inserted.extend(range(j1 + 1, j2 + 1))
+        else:  # replace
+            region = _align_replace_region(
+                list(range(i1 + 1, i2 + 1)),
+                list(range(j1 + 1, j2 + 1)),
+                old_sequence[i1:i2],
+                new_sequence[j1:j2],
+            )
+            paired.extend(region[0])
+            removed.extend(region[1])
+            inserted.extend(region[2])
+    if removed and inserted:
+        removed_signatures = Counter(old_sequence[row - 1] for row in removed)
+        inserted_signatures = Counter(new_sequence[row - 1] for row in inserted)
+        if removed_signatures == inserted_signatures:
+            # Pure row reorder: every "removed" row reappears "inserted"
+            # elsewhere, so nothing was actually added or deleted. The
+            # positional diff (value changes at the swapped positions) reads
+            # better than a remove+insert pair, so fall back.
+            return None
+    return paired, removed, inserted
+
+
+def _contiguous_runs(rows: list[int]) -> list[tuple[int, int]]:
+    runs: list[tuple[int, int]] = []
+    for row in sorted(rows):
+        if runs and row == runs[-1][1] + 1:
+            runs[-1] = (runs[-1][0], row)
+        else:
+            runs.append((row, row))
+    return runs
+
+
+def _row_run_changes(
+    change_type: StructuralChangeType,
+    sheet_name: str,
+    rows: list[int],
+    row_cells: dict[int, dict[int, CellRecord]],
+) -> list[StructuralChange]:
+    """One ROWS_INSERTED / ROWS_REMOVED change per contiguous run (D8)."""
+    inserted = change_type is StructuralChangeType.ROWS_INSERTED
+    changes: list[StructuralChange] = []
+    for start, end in _contiguous_runs(rows):
+        count = end - start + 1
+        samples: list[dict[str, Any]] = []
+        for row in range(start, end + 1):
+            cells = row_cells.get(row, {})
+            for column in sorted(cells):
+                if len(samples) >= _MAX_SAMPLE_CELLS:
+                    break
+                record = cells[column]
+                samples.append(
+                    {
+                        "coordinate": record.coordinate,
+                        "formula": record.formula,
+                        "value": record.value,
+                    }
+                )
+            if len(samples) >= _MAX_SAMPLE_CELLS:
+                break
+        position = f"row {start}" if count == 1 else f"rows {start}-{end}"
+        suffix = "" if inserted else " (old-version row numbers)"
+        changes.append(
+            StructuralChange(
+                change_type=change_type,
+                sheet_name=sheet_name,
+                description=(
+                    f"{count} row(s) {'inserted' if inserted else 'removed'} "
+                    f"at {position} on '{sheet_name}'{suffix}."
+                ),
+                details={"start_row": start, "count": count, "sample_cells": samples},
+            )
+        )
+    return changes
+
+
+def _append_cell_change(
+    changes: list[CellChange],
+    sheet_name: str,
+    coordinate: str,
+    old_rec: CellRecord | None,
+    new_rec: CellRecord | None,
+    map_old_formula: Callable[[str], str] | None,
+    *,
+    suppress_shift_noise: bool = False,
+) -> None:
+    classified = _classify_cell(old_rec, new_rec, map_old_formula)
+    if classified is None:
+        return
+    change_type, explanation = classified
+    normalized_equal = bool(
+        old_rec is not None
+        and new_rec is not None
+        and old_rec.normalized_formula is not None
+        and old_rec.normalized_formula == new_rec.normalized_formula
+    )
+    if suppress_shift_noise and (
+        change_type == ChangeType.FORMATTING_ONLY
+        or (change_type == ChangeType.FORMULA_CHANGED and normalized_equal)
+    ):
+        # D8: this pair sits on rows aligned across an insertion/deletion.
+        # Reference shifts and cross-row formatting comparisons are alignment
+        # artifacts, not edits; genuinely changed logic still differs after
+        # normalization and is reported below.
+        return
+    severity, confidence = classify_cell_change(
+        change_type, normalized_equal=normalized_equal
+    )
+    changes.append(
+        CellChange(
+            sheet_name=sheet_name,
+            coordinate=coordinate,
+            change_type=change_type,
+            old_value=old_rec.value if old_rec else None,
+            new_value=new_rec.value if new_rec else None,
+            old_formula=old_rec.formula if old_rec else None,
+            new_formula=new_rec.formula if new_rec else None,
+            normalized_old_formula=old_rec.normalized_formula if old_rec else None,
+            normalized_new_formula=new_rec.normalized_formula if new_rec else None,
+            severity=severity,
+            confidence=confidence,
+            explanation=explanation,
+        )
+    )
+
+
 def compare_inventories(
     old: WorkbookInventory, new: WorkbookInventory
 ) -> tuple[list[StructuralChange], list[CellChange]]:
@@ -459,39 +761,48 @@ def compare_inventories(
         new_sheet = new.sheet(new_name)
         if old_sheet is None or new_sheet is None:
             continue
-        for coordinate in sorted(
-            set(old_sheet.cells) | set(new_sheet.cells),
-            key=lambda c: (len(c), c),
-        ):
-            old_rec = old_sheet.cells.get(coordinate)
-            new_rec = new_sheet.cells.get(coordinate)
-            classified = _classify_cell(old_rec, new_rec, map_old_formula)
-            if classified is None:
-                continue
-            change_type, explanation = classified
-            normalized_equal = bool(
-                old_rec is not None
-                and new_rec is not None
-                and old_rec.normalized_formula is not None
-                and old_rec.normalized_formula == new_rec.normalized_formula
-            )
-            severity, confidence = classify_cell_change(
-                change_type, normalized_equal=normalized_equal
-            )
-            cell_changes.append(
-                CellChange(
-                    sheet_name=new_name,
-                    coordinate=coordinate,
-                    change_type=change_type,
-                    old_value=old_rec.value if old_rec else None,
-                    new_value=new_rec.value if new_rec else None,
-                    old_formula=old_rec.formula if old_rec else None,
-                    new_formula=new_rec.formula if new_rec else None,
-                    normalized_old_formula=old_rec.normalized_formula if old_rec else None,
-                    normalized_new_formula=new_rec.normalized_formula if new_rec else None,
-                    severity=severity,
-                    confidence=confidence,
-                    explanation=explanation,
+        old_rows = _row_map(old_sheet) if old_sheet.cells else {}
+        new_rows = _row_map(new_sheet) if new_sheet.cells else {}
+        alignment = _align_rows(old_rows, new_rows) if old_rows and new_rows else None
+        if alignment is None:
+            # D7 gate failed: fall back to the positional diff, byte-identical
+            # to the pre-alignment behavior.
+            for coordinate in sorted(
+                set(old_sheet.cells) | set(new_sheet.cells),
+                key=lambda c: (len(c), c),
+            ):
+                _append_cell_change(
+                    cell_changes,
+                    new_name,
+                    coordinate,
+                    old_sheet.cells.get(coordinate),
+                    new_sheet.cells.get(coordinate),
+                    map_old_formula,
                 )
+            continue
+        paired, removed_rows, inserted_rows = alignment
+        for old_row, new_row in paired:
+            old_cells = old_rows.get(old_row, {})
+            new_cells = new_rows.get(new_row, {})
+            shifted = old_row != new_row
+            for column in sorted(set(old_cells) | set(new_cells)):
+                _append_cell_change(
+                    cell_changes,
+                    new_name,
+                    f"{get_column_letter(column)}{new_row}",
+                    old_cells.get(column),
+                    new_cells.get(column),
+                    map_old_formula,
+                    suppress_shift_noise=shifted,
+                )
+        structural.extend(
+            _row_run_changes(
+                StructuralChangeType.ROWS_INSERTED, new_name, inserted_rows, new_rows
             )
+        )
+        structural.extend(
+            _row_run_changes(
+                StructuralChangeType.ROWS_REMOVED, new_name, removed_rows, old_rows
+            )
+        )
     return structural, cell_changes

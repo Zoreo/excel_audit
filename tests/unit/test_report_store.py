@@ -76,3 +76,61 @@ def test_save_retries_when_only_html_collides(tmp_path: Path, monkeypatch):
     assert (reports_dir / f"{taken}.html").read_text(encoding="utf-8") == "<p>first</p>"
     # The half-written json for the colliding id must not linger.
     assert not (reports_dir / f"{taken}.json").exists()
+
+
+# ------------------------------------------------------------------ PDF (T13)
+
+
+def test_save_with_pdf_sets_pdf_path_and_loads(tmp_path: Path):
+    store = _store(tmp_path)
+    ref = store.save(
+        kind="audit",
+        report_json="{}",
+        report_html="<p>x</p>",
+        report_pdf=b"%PDF-1.7 stored bytes",
+    )
+    assert ref.pdf_path is not None
+    assert ref.pdf_path.name == f"{ref.report_id}.pdf"
+    assert ref.pdf_path.is_file()
+    assert store.load_pdf(ref.report_id) == b"%PDF-1.7 stored bytes"
+
+
+def test_save_without_pdf_has_no_pdf_path(tmp_path: Path):
+    store = _store(tmp_path)
+    ref = store.save(kind="audit", report_json="{}", report_html="x")
+    assert ref.pdf_path is None
+    assert store.load_pdf(ref.report_id) is None
+
+
+def test_load_pdf_rejects_invalid_and_unknown_ids(tmp_path: Path):
+    store = _store(tmp_path)
+    store.save(kind="audit", report_json="{}", report_html="x", report_pdf=b"%PDF-x")
+    assert store.load_pdf("deadbeef") is None  # valid shape, missing
+    assert store.load_pdf("../secret") is None
+    assert store.load_pdf("..%2fsecret") is None
+    assert store.load_pdf("") is None
+    assert store.load_pdf("ABCDEF12") is None  # uppercase rejected
+    assert store.load_pdf("0" * 16) is None  # neither legacy 8 nor new 32
+
+
+def test_save_retries_when_only_pdf_collides(tmp_path: Path, monkeypatch):
+    store = _store(tmp_path)
+    reports_dir = tmp_path / "artifacts" / "reports"
+    taken = "ab" * 16
+    fresh = "cd" * 16
+    (reports_dir / f"{taken}.pdf").write_bytes(b"%PDF-first")
+
+    ids = iter([taken, fresh])
+    monkeypatch.setattr(
+        "excel_auditor.storage.reports.secrets.token_hex", lambda n: next(ids)
+    )
+    ref = store.save(
+        kind="audit", report_json="{}", report_html="x", report_pdf=b"%PDF-second"
+    )
+
+    assert ref.report_id == fresh
+    assert (reports_dir / f"{taken}.pdf").read_bytes() == b"%PDF-first"  # untouched
+    # The half-written json/html for the colliding id must not linger.
+    assert not (reports_dir / f"{taken}.json").exists()
+    assert not (reports_dir / f"{taken}.html").exists()
+    assert store.load_pdf(fresh) == b"%PDF-second"
