@@ -1,6 +1,6 @@
 # Engineering Handoff — excel-auditor POC
 
-Status: **working, reviewable**. 294 tests passing, ruff clean, mypy clean
+Status: **working, reviewable**. 296 tests passing, ruff clean, mypy clean
 (74 source files), application exercised live (CLI + server) before handoff.
 Includes the 2026-07 remediation of all verified audit findings and
 milestone 3 (report schema v3: row-insertion inference, exact Excel Table
@@ -81,8 +81,9 @@ metadata, PDF export, MCP/Teams integration scaffolding — see
 **Interfaces (all thin; zero analysis logic inside):**
 
 - CLI: `audit`, `compare`, `schema`, `query`, `ask`, `demo`, `serve` with
-  `--output-dir/--json-output/--html-output/--open/--verbose/--choice/
-  --no-input/--reference-date`. Interactive `Select [1-N]` confirmation loop;
+  `--output-dir/--json-output/--html-output/--pdf-output/--pdf/--open/
+  --verbose/--choice/--no-input/--reference-date` plus `--notify-teams` on
+  audit/compare. Interactive `Select [1-N]` confirmation loop;
   exit codes 0/2/3.
 - Report store: `artifacts/reports/{random-id}.{json,html}` served at
   `{base_url}/reports/{id}`; CLI prints URL + path for every run.
@@ -117,7 +118,7 @@ excel-auditor/
 │   ├── integrations/        # MCP server, Teams webhooks + Adaptive Cards
 │   └── storage/             # sqlite job store + file report store
 ├── scripts/                 # generate_demo_workbooks.py, demo_tour.py
-└── tests/                   # 294 tests: unit/ + integration/ + conftest fixtures
+└── tests/                   # 296 tests: unit/ + integration/ + conftest fixtures
 ```
 
 ## 3. Install / run / test
@@ -135,7 +136,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Python >= 3.12
 .venv/bin/excel-auditor ask <sales.xlsx> "Какъв е общият оборот за 2025?"
 .venv/bin/excel-auditor serve                 # http://localhost:8000
 
-.venv/bin/python -m pytest                    # 294 tests
+.venv/bin/python -m pytest                    # 296 tests
 .venv/bin/ruff check src tests
 .venv/bin/mypy src/excel_auditor
 

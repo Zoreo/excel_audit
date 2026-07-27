@@ -237,7 +237,7 @@ production needs authentication (documented limitation).
 ### Tests & checks
 
 ```bash
-.venv/bin/python -m pytest      # 233 tests
+.venv/bin/python -m pytest      # 296 tests
 .venv/bin/ruff check src tests
 .venv/bin/mypy src/excel_auditor
 ```

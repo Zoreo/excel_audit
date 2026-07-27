@@ -92,7 +92,7 @@ A **working product** (POC stage, local-first), not a slide-deck idea:
   ambiguous.
 
 Interfaces: terminal CLI, HTML/JSON reports at shareable local URLs, REST
-API, minimal web demo pages. 233 automated tests. Runs entirely on our
+API, minimal web demo pages. 296 automated tests. Runs entirely on our
 machine — **client files never leave it**.
 
 ---
@@ -335,7 +335,7 @@ describe, so there's never a "which version was this run on?" argument.
 **Q: Why should we trust a product this young?**
 Don't trust it — test it. That's the pilot: your real workbook, our tool, in
 front of you, and you judge every finding. The engineering behind that offer:
-233 automated tests, a third-party-style audit of the codebase with every
+296 automated tests, a third-party-style audit of the codebase with every
 confirmed finding fixed (paper trail included), and reports designed as
 evidence — deterministic, fingerprinted, with limitations printed on every
 page.
