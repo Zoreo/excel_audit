@@ -100,6 +100,43 @@ def _group_repeated(findings: list[Finding]) -> list[Finding]:
     return out
 
 
+# D18: rounding drift on a total cell that other rules flag as a manual fix
+# (overwritten formula, hardcoded number) gets cross-referenced both ways.
+_ROUNDING_RULE = "EA-RND-001"
+_MANUAL_FIX_RULES = {"EA-PAT-001", "EA-HRD-001"}
+
+
+def _cross_link_rounding(findings: list[Finding]) -> None:
+    """Same-coordinate cross-links between EA-RND-001 and manual-fix findings."""
+
+    def coordinate(finding: Finding) -> tuple[str, str] | None:
+        loc = finding.location
+        if loc is not None and loc.coordinate:
+            return (loc.sheet_name, loc.coordinate)
+        return None
+
+    rounding_at: dict[tuple[str, str], list[Finding]] = defaultdict(list)
+    for finding in findings:
+        if finding.rule_id == _ROUNDING_RULE and (key := coordinate(finding)):
+            rounding_at[key].append(finding)
+    if not rounding_at:
+        return
+    for finding in findings:
+        if finding.rule_id not in _MANUAL_FIX_RULES:
+            continue
+        matches = rounding_at.get(coordinate(finding) or ("", ""))
+        if not matches:
+            continue
+        finding.evidence["related_finding_rule_ids"] = [_ROUNDING_RULE]
+        finding.evidence["related_finding_note"] = (
+            "likely manual rounding adjustment — see EA-RND-001"
+        )
+        for drift_finding in matches:
+            linked = drift_finding.evidence.setdefault("related_finding_rule_ids", [])
+            if isinstance(linked, list) and finding.rule_id not in linked:
+                linked.append(finding.rule_id)
+
+
 def run_all_rules_with_failures(ctx: AuditContext) -> tuple[list[Finding], list[str]]:
     """Run every registered rule; return (findings, ids of rules that raised).
 
@@ -115,6 +152,7 @@ def run_all_rules_with_failures(ctx: AuditContext) -> tuple[list[Finding], list[
         except Exception:  # a broken rule must never sink the whole audit
             logger.exception("Rule %s failed", rule_cls.rule_id)
             failed_rules.append(rule_cls.rule_id)
+    _cross_link_rounding(findings)
     findings = _group_repeated(findings)
     findings.sort(key=lambda f: SEVERITY_ORDER[f.severity], reverse=True)
     return findings, failed_rules
@@ -137,6 +175,7 @@ from . import (  # noqa: E402,F401
     inconsistent_formulas,
     opaque_content,
     overwritten_formulas,
+    rounding,
     suspicious_ranges,
     volatile_functions,
 )

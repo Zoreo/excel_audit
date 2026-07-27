@@ -107,6 +107,9 @@ class WorkbookInventory(BaseModel):
     has_macros: bool = False
     has_data_connections: bool = False
     calculation_mode: str | None = None
+    # Excel's fullPrecision calc property; False = "Set precision as displayed".
+    # None means the file did not state it (and must not be treated as False).
+    full_precision: bool | None = None
     workbook_protected: bool = False
 
     @property
