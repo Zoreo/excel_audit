@@ -255,9 +255,13 @@ def build_inventory(
         sheets.append(_build_sheet(ws, ws_values, index))
 
     calc_mode = None
+    full_precision = None
     calc = getattr(wb, "calculation", None)
     if calc is not None:
         calc_mode = getattr(calc, "calcMode", None)
+        raw_precision = getattr(calc, "fullPrecision", None)
+        if raw_precision is not None:
+            full_precision = bool(raw_precision)
 
     security = getattr(wb, "security", None)
     protected = bool(
@@ -275,6 +279,7 @@ def build_inventory(
         has_macros=loaded.zip_facts.has_vba,
         has_data_connections=loaded.zip_facts.has_data_connections,
         calculation_mode=str(calc_mode) if calc_mode else None,
+        full_precision=full_precision,
         workbook_protected=protected,
     )
 
