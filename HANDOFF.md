@@ -1,9 +1,11 @@
 # Engineering Handoff — excel-auditor POC
 
-Status: **working, reviewable**. 233 tests passing, ruff clean, mypy clean
-(69 source files), application exercised live (CLI + server) before handoff.
-Includes the 2026-07 remediation of all verified audit findings (report
-schema v2 — see `docs/audits/` for the paper trail).
+Status: **working, reviewable**. 294 tests passing, ruff clean, mypy clean
+(74 source files), application exercised live (CLI + server) before handoff.
+Includes the 2026-07 remediation of all verified audit findings and
+milestone 3 (report schema v3: row-insertion inference, exact Excel Table
+metadata, PDF export, MCP/Teams integration scaffolding — see
+`docs/plans/milestone-3-prompt.md` and `docs/plans/milestone-3-progress.md`).
 
 ## 1. What was implemented
 
@@ -45,6 +47,37 @@ schema v2 — see `docs/audits/` for the paper trail).
   rejects open-ended questions), mock parser for tests. LLM provider slot
   exists but is deliberately not bundled.
 
+**Milestone 3 (2026-07, report schema v3):**
+
+- **Row-insertion inference in the diff** (`analysis/workbook_diff.py`):
+  per-sheet row signatures aligned with `difflib.SequenceMatcher`
+  (deterministic, stdlib). Inserted/removed rows collapse into
+  `rows_inserted`/`rows_removed` structural changes (per contiguous run, with
+  sample previews); shifted-but-unchanged rows produce zero cell changes;
+  edits on aligned rows report at their new coordinates. Gate: ≥ 5 data rows
+  both sides and similarity ratio ≥ 0.60, else byte-identical fallback to the
+  positional diff. Column insertions still not inferred.
+- **Exact Excel Table metadata** (`workbook_inventory.py`, `schema.py`,
+  `dependency_graph.py`): declared `headerRowCount`/`totalsRowCount` override
+  heuristic header/totals detection (note says "exact (from Excel Table
+  metadata)"); totals rows excluded from row counts, query sums, and
+  structured-reference dependency ranges.
+- **PDF export** (`reporting/pdf_report.py`): optional `[pdf]` extra
+  (WeasyPrint; macOS `brew install pango`). Lazy import; without the extra
+  the CLI exits 2 and the API returns 422 with the install hint. **PDFs are
+  excluded from the byte-determinism guarantee** (embedded creation
+  metadata) — JSON/HTML remain the canonical evidence artifacts; the report
+  footer says so.
+- **Integrations** (`integrations/`, zero analysis logic): MCP server
+  (FastMCP, stdio, optional `[mcp]` extra) with `audit_workbook`,
+  `compare_workbooks`, `inspect_schema`, `ask_question` (confirmation flow
+  preserved — ambiguity returns candidates, caller re-invokes with
+  `choices`); Teams incoming-webhook card poster (injectable transport) and
+  HMAC-validated `POST /integrations/teams` (`status <id>` / `help`),
+  mounted only when `EXCEL_AUDITOR_TEAMS_ENABLED=1` (flag off ⇒ route list
+  byte-identical). Teams outgoing webhooks cannot receive file attachments;
+  workbook Q&A in Teams needs a real Azure bot (later milestone).
+
 **Interfaces (all thin; zero analysis logic inside):**
 
 - CLI: `audit`, `compare`, `schema`, `query`, `ask`, `demo`, `serve` with
@@ -78,12 +111,13 @@ excel-auditor/
 │   ├── analysis/            # inventory, diff, patterns, graph, severity,
 │   │   └── rules/           #   review items, schema, resolution, query engine
 │   ├── llm/                 # IntentParser protocol, rule & mock parsers
-│   ├── reporting/           # json_report, html_report + templates/
+│   ├── reporting/           # json_report, html_report, pdf_report + templates/
 │   ├── api/                 # FastAPI app, routes/, schemas/, upload handling
 │   ├── web/                 # server-rendered demo pages
+│   ├── integrations/        # MCP server, Teams webhooks + Adaptive Cards
 │   └── storage/             # sqlite job store + file report store
-├── scripts/generate_demo_workbooks.py
-└── tests/                   # 233 tests: unit/ + integration/ + conftest fixtures
+├── scripts/                 # generate_demo_workbooks.py, demo_tour.py
+└── tests/                   # 294 tests: unit/ + integration/ + conftest fixtures
 ```
 
 ## 3. Install / run / test
@@ -101,9 +135,15 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Python >= 3.12
 .venv/bin/excel-auditor ask <sales.xlsx> "Какъв е общият оборот за 2025?"
 .venv/bin/excel-auditor serve                 # http://localhost:8000
 
-.venv/bin/python -m pytest                    # 233 tests
+.venv/bin/python -m pytest                    # 294 tests
 .venv/bin/ruff check src tests
 .venv/bin/mypy src/excel_auditor
+
+# optional extras
+.venv/bin/pip install -e ".[pdf]"    # PDF export (WeasyPrint; macOS: brew install pango)
+.venv/bin/pip install -e ".[mcp]"    # MCP server
+.venv/bin/excel-auditor audit <wb.xlsx> --pdf-output report.pdf
+.venv/bin/python -m excel_auditor.integrations.mcp_server   # MCP over stdio
 ```
 
 Docker: `docker compose up --build` (API on :8000, data volume mounted).
@@ -161,8 +201,9 @@ Docker: `docker compose up --build` (API on :8000, data volume mounted).
   Power Query / data-model connections (presence flagged only).
 - Array-formula spill semantics, `.xlsm` macro analysis, R1C1-authored formulas,
   external links resolved through the filesystem (never followed).
-- Row/column insertion inference in diffs (shifted blocks appear as many
-  changes; structurally-identical shifts are downgraded to info).
+- Column insertion inference in diffs (shifted blocks appear as many changes;
+  structurally-identical shifts are downgraded to info). Row insertion
+  inference shipped in schema v3.
 - Shared-formula edge cases depend on how the source app saved the file.
 
 ## 8. Known bugs / uncertain areas
@@ -181,9 +222,11 @@ Docker: `docker compose up --build` (API on :8000, data volume mounted).
   like `Tbl[[#All],[Col]]`) build no edges and instead set the
   `has_unresolved_names` impact marker (JSON reports only; HTML does not
   render the marker yet), which caps confidence so a possibly-understated
-  impact is never reported as a confident zero. Table resolution assumes
-  Excel's default single header row (the inventory does not record
-  `headerRowCount`/`totalsRowCount`).
+  impact is never reported as a confident zero. Since schema v3 the
+  inventory records `headerRowCount`/`totalsRowCount` from real Excel
+  Tables and structured-reference resolution honors them exactly; tables
+  declaring `headerRowCount=0` refuse named-column resolution (no in-sheet
+  header row to match) and keep the unknown-impact marker.
 - Formatting-only detection compares a compact style signature (number format,
   bold/italic/underline, fill); exotic style changes outside it are invisible.
 - Grouped month keys sort lexicographically (fine for YYYY-MM).

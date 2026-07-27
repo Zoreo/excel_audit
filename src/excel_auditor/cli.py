@@ -117,6 +117,21 @@ def _publish(
     return ref
 
 
+def _notify_teams(
+    settings: Settings, ref: ReportRef, report: AuditReport | WorkbookComparison
+) -> int:
+    """Post the report card to the configured Teams incoming webhook."""
+    from .integrations.teams import post_report_card
+
+    try:
+        status = post_report_card(settings, ref, report)
+    except Exception as exc:  # noqa: BLE001 - report published; notification failed
+        print(f"Teams notification failed: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    print(f"Teams notification posted (HTTP {status}).")
+    return EXIT_OK
+
+
 # ------------------------------------------------------------------- audit
 
 
@@ -145,9 +160,11 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         generated_at=getattr(args, "generated_at", None),
     )
     _print_audit_summary(report, verbose=args.verbose)
-    _publish(
+    ref = _publish(
         report, render_audit_html(report), kind="audit", args=args, settings=settings
     )
+    if getattr(args, "notify_teams", False):
+        return _notify_teams(settings, ref, report)
     return EXIT_OK
 
 
@@ -188,13 +205,15 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         generated_at=getattr(args, "generated_at", None),
     )
     _print_comparison_summary(report, verbose=args.verbose)
-    _publish(
+    ref = _publish(
         report,
         render_comparison_html(report),
         kind="comparison",
         args=args,
         settings=settings,
     )
+    if getattr(args, "notify_teams", False):
+        return _notify_teams(settings, ref, report)
     return EXIT_OK
 
 
@@ -495,6 +514,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--generated-at", dest="generated_at", type=_iso_datetime,
         help="Report timestamp override (ISO-8601) for reproducible output",
     )
+    audit.add_argument(
+        "--notify-teams", dest="notify_teams", action="store_true", default=False,
+        help="Post a summary card to the configured Teams incoming webhook "
+             "(EXCEL_AUDITOR_TEAMS_INCOMING_WEBHOOK_URL)",
+    )
     _add_common_flags(audit)
     audit.set_defaults(func=_cmd_audit)
 
@@ -504,6 +528,11 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument(
         "--generated-at", dest="generated_at", type=_iso_datetime,
         help="Report timestamp override (ISO-8601) for reproducible output",
+    )
+    compare.add_argument(
+        "--notify-teams", dest="notify_teams", action="store_true", default=False,
+        help="Post a summary card to the configured Teams incoming webhook "
+             "(EXCEL_AUDITOR_TEAMS_INCOMING_WEBHOOK_URL)",
     )
     _add_common_flags(compare)
     compare.set_defaults(func=_cmd_compare)

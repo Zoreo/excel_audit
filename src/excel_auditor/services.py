@@ -39,7 +39,8 @@ LIMITATIONS = [
     "Cached values are whatever Excel last saved; openpyxl-generated files may have none.",
     "VBA macros are detected but never executed or analyzed.",
     "External references are treated as untrusted text and never followed.",
-    "Row/column insertions are not inferred; they surface as many shifted-formula changes.",
+    "Column insertions are not inferred; they surface as many shifted-formula changes. "
+    "Row insertions/removals are inferred and reported as structural changes.",
     "Password-protected and corrupted workbooks cannot be analyzed.",
     "Shared-formula expansion depends on how the source application saved the file.",
 ]
