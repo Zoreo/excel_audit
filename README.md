@@ -128,6 +128,8 @@ These are engineering guarantees, each enforced by regression tests:
 | EA-PAT-003 | Missing formula inside a repeated block (fully blank spacer rows/columns are recognized as layout and skipped) |
 | EA-RNG-001 | Aggregation range that excludes an adjacent populated cell (stale totals) |
 | EA-RNG-002 | Formulas referencing blank cells inside the used range |
+| EA-RND-001 | Displayed figures that don't add up (cent-level rounding drift between a total and its rounded components, with the residue-carrying cells named) |
+| EA-RND-002 | Excel's "Set precision as displayed" enabled (permanently rounds stored values on save) |
 | EA-REF-001 | Broken references (`#REF!`) in formulas and named ranges |
 | EA-ERR-001 | Error values (`#DIV/0!`, `#VALUE!`, …; `#N/A` reported at lower severity) |
 | EA-VOL-001 | Volatile functions (`OFFSET`, `INDIRECT`, `NOW`, `TODAY`, `RAND`, `RANDBETWEEN`) |
@@ -237,7 +239,7 @@ production needs authentication (documented limitation).
 ### Tests & checks
 
 ```bash
-.venv/bin/python -m pytest      # 296 tests
+.venv/bin/python -m pytest      # 311 tests
 .venv/bin/ruff check src tests
 .venv/bin/mypy src/excel_auditor
 ```

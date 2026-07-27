@@ -147,6 +147,29 @@ def build_demo_workbook(path: Path, *, with_anomalies: bool) -> Path:
         summary["A8"] = "Report date"
         summary["B8"] = "=TODAY()"
 
+    # ----------------------------------------------------------------- Фактури
+    # Anomaly 11: cent-level rounding drift. The line items carry sub-cent
+    # precision, so their displayed values add to 4,456.00 while the true sum
+    # 4,456.005 displays as 4,456.01 — and the total was hand-typed to match.
+    if with_anomalies:
+        inv = wb.create_sheet("Фактури")
+        for col, header in zip("AB", ["Услуга", "Сума"], strict=True):
+            inv[f"{col}1"] = header
+            inv[f"{col}1"].font = BOLD
+        items = [
+            ("Консултации май", 1234.564),
+            ("Абонамент поддръжка", 2345.333),
+            ("Лицензи (преизчислени)", 876.108),
+        ]
+        for row, (label, amount) in enumerate(items, start=2):
+            inv[f"A{row}"] = label
+            inv[f"B{row}"] = amount
+            inv[f"B{row}"].number_format = '#,##0.00 "лв"'
+        inv["A5"] = "Общо"
+        inv["A5"].font = BOLD
+        inv["B5"] = 4456.01  # hand-corrected to the rounded true sum
+        inv["B5"].number_format = '#,##0.00 "лв"'
+
     # Anomaly 4: a hidden sheet containing data.
     if with_anomalies:
         adj = wb.create_sheet("Adjustments")

@@ -253,6 +253,43 @@ def tour_row_insertion_collapse(workdir: Path) -> None:
     print("      now it is one rows_inserted plus the genuinely grown total.")
 
 
+def _invoice_with_drift(path: Path) -> Path:
+    """Line items with sub-cent residue and a hand-corrected total."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Фактури"
+    ws["A1"], ws["B1"] = "Услуга", "Сума"
+    items = [("Консултации", 1234.564), ("Поддръжка", 2345.333), ("Лицензи", 876.108)]
+    for row, (label, amount) in enumerate(items, start=2):
+        ws[f"A{row}"] = label
+        ws[f"B{row}"] = amount
+        ws[f"B{row}"].number_format = '#,##0.00 "лв"'
+    ws["A5"] = "Общо"
+    ws["B5"] = 4456.01                        # typed in to "fix" the total
+    ws["B5"].number_format = '#,##0.00 "лв"'
+    wb.save(path)
+    return path
+
+
+def tour_rounding_drift(workdir: Path) -> None:
+    _banner("7. The invoice that's off by a cent — found, explained, cells named")
+    path = _invoice_with_drift(workdir / "invoice.xlsx")
+    report = audit_workbook(path, generated_at=STAMP)
+    for f in (f for f in report.findings if f.rule_id == "EA-RND-001"):
+        loc = f.location
+        ev = f.evidence
+        print(f"EA-RND-001 at {loc.sheet_name}!{loc.coordinate}: {f.title}")
+        print(f"   displayed components {ev['displayed_components_sum']} vs "
+              f"displayed total {ev['displayed_total']} "
+              f"(drift {ev['drift']} {ev.get('currency', '')})")
+        for res in ev["residue_cells"]:
+            print(f"   residue: {res['cell']} stores {res['stored']} "
+                  f"but displays {res['displayed']}")
+    print("   -> the printed column really is off by one stotinka; the guilty")
+    print("      cells carry sub-display precision that SUM sees and the eye")
+    print("      doesn't. The fix is a ROUND() policy, not a typed-over total.")
+
+
 def main() -> None:
     print("excel-auditor — trust-guarantee tour (report schema v3)")
     with tempfile.TemporaryDirectory(prefix="excel-auditor-tour-") as tmp:
@@ -263,6 +300,7 @@ def main() -> None:
         tour_named_input_impact(workdir)
         tour_deterministic_reports(workdir)
         tour_row_insertion_collapse(workdir)
+        tour_rounding_drift(workdir)
     print()
     print("Done. Full reports: excel-auditor audit/compare/ask <file> "
           "(HTML + JSON with provenance).")

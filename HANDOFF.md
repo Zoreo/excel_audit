@@ -1,6 +1,6 @@
 # Engineering Handoff — excel-auditor POC
 
-Status: **working, reviewable**. 296 tests passing, ruff clean, mypy clean
+Status: **working, reviewable**. 311 tests passing, ruff clean, mypy clean
 (74 source files), application exercised live (CLI + server) before handoff.
 Includes the 2026-07 remediation of all verified audit findings and
 milestone 3 (report schema v3: row-insertion inference, exact Excel Table
@@ -14,11 +14,14 @@ metadata, PDF export, MCP/Teams integration scaffolding — see
 - Safe workbook loading: zip-bomb/path-traversal defenses, macro & data-connection
   detection (macros never executed), dual-pass openpyxl load (formulas + cached values).
 - Typed workbook inventory (sheets, cells, formulas, normalized formulas, styles,
-  merged ranges, hidden rows/cols, named ranges, unified external-link targets).
+  merged ranges, hidden rows/cols, named ranges, unified external-link targets,
+  calculation flags incl. fullPrecision — Excel's "Set precision as displayed").
 - Formula normalization to relative R1C1 form so copied formulas compare structurally.
-- Single-workbook audit: 16 rules (hidden content, external dependencies, broken
+- Single-workbook audit: 19 rules (hidden content, external dependencies, broken
   refs, error values, volatile functions, hardcoded literals, pattern anomalies,
-  suspicious total ranges, circular refs, long formulas, opaque content). Stable
+  suspicious total ranges, cent-level rounding drift in totals + the
+  precision-as-displayed workbook flag, circular refs, long formulas, opaque
+  content). Stable
   rule ids, severity + separate confidence, evidence, suggested action; repeated
   low/medium findings grouped per (rule, sheet).
 - Two-version comparison: 9 cell-change categories + 14 structural change types,
@@ -118,7 +121,7 @@ excel-auditor/
 │   ├── integrations/        # MCP server, Teams webhooks + Adaptive Cards
 │   └── storage/             # sqlite job store + file report store
 ├── scripts/                 # generate_demo_workbooks.py, demo_tour.py
-└── tests/                   # 296 tests: unit/ + integration/ + conftest fixtures
+└── tests/                   # 311 tests: unit/ + integration/ + conftest fixtures
 ```
 
 ## 3. Install / run / test
@@ -136,7 +139,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Python >= 3.12
 .venv/bin/excel-auditor ask <sales.xlsx> "Какъв е общият оборот за 2025?"
 .venv/bin/excel-auditor serve                 # http://localhost:8000
 
-.venv/bin/python -m pytest                    # 296 tests
+.venv/bin/python -m pytest                    # 311 tests
 .venv/bin/ruff check src tests
 .venv/bin/mypy src/excel_auditor
 

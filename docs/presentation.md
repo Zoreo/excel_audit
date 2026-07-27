@@ -77,10 +77,12 @@ tools can add overnight.
 A **working product** (POC stage, local-first), not a slide-deck idea:
 
 - **Audit** one workbook → risk report: hardcoded formula overrides, totals
-  that miss rows, broken references (`#REF!`), circular references (including
-  self-including SUMs), hidden sheets/rows/columns, external file
-  dependencies, volatile functions, error cells — 16 rule families, each
-  finding with location, evidence and a suggested action.
+  that miss rows, cent-level rounding drift in totals (the printed figures
+  that don't add up — with the guilty cells named), broken references
+  (`#REF!`), circular references (including self-including SUMs), hidden
+  sheets/rows/columns, external file dependencies, volatile functions, error
+  cells — 19 rules, each finding with location, evidence and a suggested
+  action.
 - **Compare** two versions → what changed (formulas, values, structure,
   formatting-only), unified into **review items** with one reconciled
   severity, plus the downstream blast radius of every change.
@@ -92,7 +94,7 @@ A **working product** (POC stage, local-first), not a slide-deck idea:
   ambiguous.
 
 Interfaces: terminal CLI, HTML/JSON reports at shareable local URLs, REST
-API, minimal web demo pages. 296 automated tests. Runs entirely on our
+API, minimal web demo pages. 311 automated tests. Runs entirely on our
 machine — **client files never leave it**.
 
 ---
@@ -301,6 +303,13 @@ Yes — Cyrillic sheet names, Bulgarian column headers, transliterated Latin
 headers, and questions asked in Bulgarian. That's native behavior, tested,
 not a translation layer.
 
+**Q: My invoice total is off by one stotinka — can it find why?**
+Yes, that exact case. Excel stores more precision than it displays, so the
+printed line items can add to 4,456.00 while the total prints 4,456.01. The
+audit computes both displayed sums, reports the drift, and names the cells
+carrying the hidden sub-cent precision — instead of you re-adding the column
+by hand.
+
 ### Trust & accuracy
 
 **Q: How confident are you that this doesn't produce nonsense answers?**
@@ -335,7 +344,7 @@ describe, so there's never a "which version was this run on?" argument.
 **Q: Why should we trust a product this young?**
 Don't trust it — test it. That's the pilot: your real workbook, our tool, in
 front of you, and you judge every finding. The engineering behind that offer:
-296 automated tests, a third-party-style audit of the codebase with every
+311 automated tests, a third-party-style audit of the codebase with every
 confirmed finding fixed (paper trail included), and reports designed as
 evidence — deterministic, fingerprinted, with limitations printed on every
 page.

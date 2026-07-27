@@ -28,6 +28,7 @@ def test_demo_v2_fires_expected_rules(new_inventory):
     assert "EA-PAT-002" in fired  # wrong-row copy
     assert "EA-RNG-001" in fired  # total excludes final month
     assert "EA-HRD-001" in fired  # 0.9 / 0.45 hardcoded in formulas
+    assert "EA-RND-001" in fired  # Фактури rounding drift (displayed sums differ)
 
 
 def test_demo_v1_quieter_than_v2(old_inventory, new_inventory):
